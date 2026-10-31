@@ -5,7 +5,7 @@
 Only historical reference `dmit2k/FrankenASP`, commit
 `52d51de33e3105501b298c1c214db55f05a2eb82`. Historical remote:
 `https://github.com/dmit2k/FrankenASP.git`. This reference was available from
-`/home/gptlab/dev/asp2-github-control-20261029/FrankenASP`; it is not a V3
+a separate checkout of the referenced historical repository; it is not a V3
 baseline and no old commit was merged/cherry-picked. Its MIT attribution is
 preserved in `THIRD_PARTY_NOTICES.md`.
 
@@ -63,7 +63,7 @@ For live mode the existing host vendor filesystem must be read-only.
 
 ## Limit of proof
 
-Native alias tests and static launch security review run on trainer without
+Native alias tests and static launch security review run on an offline validation environment without
 privilege. ARM32 crossbuild checks ELF/ABI but does **not** execute launcher,
 mount, chroot, Bionic child, vendor Calibrator, or Echo hardware. Only a real
 owner-authorized device qualification can confirm firmware-specific paths,

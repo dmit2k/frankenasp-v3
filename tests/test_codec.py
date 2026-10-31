@@ -60,5 +60,7 @@ bad.update({
  "raw_value_too_long":mut((root/"large_factory.bin").read_bytes(),24+28+8+1,u16(32769)),
 })
 for n in (0,1,4,8,23,24,len(s)//2,len(s)-1):bad["truncated"+str(n)]=s[:n]
-for name,data in bad.items():ensure(call(data).returncode!=0,"invalid accepted "+name)
+for name,data in bad.items():
+ result=call(data)
+ ensure(result.returncode==2 and b"AddressSanitizer" not in result.stderr and b"runtime error:" not in result.stderr,"invalid must reject cleanly: "+name+str(result.returncode))
 print("invalid/rejected",len(bad),"PASS")

@@ -10,46 +10,14 @@ static uint16_t le16(const uint8_t *p) {
 static uint32_t le32(const uint8_t *p) {
  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
-static int source_char(uint8_t c) {
- return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-        (c >= '0' && c <= '9') || c == '/' || c == '_' || c == '-' || c == '.';
-}
-/* Three fixed raw sections: platform=1, hardware=2, factory=3.
-   Each contains [name length:u8][value length:LE16][name][unaltered bytes]. */
-static int parse_raw(const uint8_t *p, size_t size, uint8_t section, asp_descriptor *d) {
- size_t pos = 0;
- while (pos < size) {
-  if (size - pos < 3 || d->raw_count >= ASP_MAX_RAW_ENTRIES) return -1;
-  unsigned name_len = p[pos];
-  unsigned val_len = le16(p + pos + 1);
-  pos += 3;
-  if (name_len == 0 || name_len > 63 || val_len > ASP_MAX_RAW_VALUE ||
-      (size_t)name_len + val_len > size - pos) return -1;
-  for (unsigned i = 0; i < name_len; i++) if (!source_char(p[pos + i])) return -1;
-  for (unsigned i = 0; i < d->raw_count; i++) {
-   asp_raw_field *f = &d->raw[i];
-   if (f->section == section && f->source_length == name_len &&
-       memcmp(f->source, p + pos, name_len) == 0) return -1;
-  }
-  asp_raw_field *f = &d->raw[d->raw_count++];
-  f->section = section; f->source = p + pos; f->source_length = (uint8_t)name_len;
-  pos += name_len;
-  f->length = (uint16_t)val_len; f->value = p + pos;
-  pos += val_len;
- }
- return 0;
-}
 int asp_decode(const uint8_t *wire, size_t length, asp_descriptor *d) {
  if (!wire || !d || length < ASP_HEADER_BYTES || length > ASP_MAX_DESCRIPTOR ||
      memcmp(wire, "ASP1", 4) != 0 || le16(wire + 4) != 1) return -1;
  uint8_t nb = wire[6], nc = wire[7];
  uint32_t size = le32(wire + 8);
- uint16_t platform = le16(wire + 16), hardware = le16(wire + 18);
- uint32_t factory = le32(wire + 20);
- if (!nb || !nc || size != length) return -1;
- size_t fixed = ASP_HEADER_BYTES + (size_t)nb * ASP_BUFFER_BYTES +
-                (size_t)nc * ASP_CHANNEL_BYTES;
- if (fixed > length || (uint64_t)platform + hardware + factory != (uint64_t)(length - fixed)) return -1;
+ if (!nb || !nc || size != length ||
+     length != ASP_HEADER_BYTES + (size_t)nb * ASP_BUFFER_BYTES +
+               (size_t)nc * ASP_CHANNEL_BYTES) return -1;
  memset(d, 0, sizeof(*d));
  d->buffer_count = nb; d->channel_count = nc; d->input_bytes = le32(wire + 12);
  uint64_t input_sum = 0;
@@ -97,12 +65,6 @@ int asp_decode(const uint8_t *wire, size_t length, asp_descriptor *d) {
  if (first != nc || mic == 0 || input_sum != d->input_bytes) return -1;
  for (unsigned i = 0; i < mic; i++) if (!seen_mic[i]) return -1;
  for (unsigned i = 0; i < ref; i++) if (!seen_ref[i]) return -1;
- const uint8_t *raw = wire + fixed;
- if (parse_raw(raw, platform, 1, d) != 0) return -1;
- raw += platform;
- if (parse_raw(raw, hardware, 2, d) != 0) return -1;
- raw += hardware;
- if (parse_raw(raw, factory, 3, d) != 0) return -1;
  return 0;
 }
 static int read_all(int fd, uint8_t *p, size_t n) {
@@ -121,7 +83,9 @@ int asp_read_fd(int fd, uint8_t **wire, size_t *length) {
  if (read_all(fd, header, sizeof(header)) != 0) return -1;
  uint32_t total = le32(header + 8);
  if (memcmp(header, "ASP1", 4) != 0 || le16(header + 4) != 1 ||
-     !header[6] || !header[7] || total < ASP_HEADER_BYTES || total > ASP_MAX_DESCRIPTOR) return -1;
+     !header[6] || !header[7] ||
+     total != ASP_HEADER_BYTES + (uint32_t)header[6] * ASP_BUFFER_BYTES +
+              (uint32_t)header[7] * ASP_CHANNEL_BYTES) return -1;
  uint8_t *p = malloc(total);
  if (!p) return -1;
  memcpy(p, header, sizeof(header));

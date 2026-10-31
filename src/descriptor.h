@@ -2,12 +2,10 @@
 #define FRANKENASP_V3_DESCRIPTOR_H
 #include <stddef.h>
 #include <stdint.h>
-#define ASP_HEADER_BYTES 24u
+#define ASP_HEADER_BYTES 16u
 #define ASP_BUFFER_BYTES 28u
 #define ASP_CHANNEL_BYTES 8u
-#define ASP_MAX_DESCRIPTOR 65536u
-#define ASP_MAX_RAW_VALUE 32768u
-#define ASP_MAX_RAW_ENTRIES 64u
+#define ASP_MAX_DESCRIPTOR (ASP_HEADER_BYTES + 255u * ASP_BUFFER_BYTES + 255u * ASP_CHANNEL_BYTES)
 #define ASP_READY_BYTE 0xa5u
 #define ASP_OUTPUT_BYTES 640u
 typedef struct {
@@ -21,18 +19,10 @@ typedef struct {
  uint32_t frame_offset;
 } asp_channel;
 typedef struct {
- uint8_t section, source_length;
- const uint8_t *source;
- uint16_t length;
- const uint8_t *value;
-} asp_raw_field;
-typedef struct {
- uint8_t buffer_count, channel_count, raw_count;
+ uint8_t buffer_count, channel_count;
  uint32_t input_bytes;
  asp_buffer buffers[255];
  asp_channel channels[255];
- asp_raw_field raw[ASP_MAX_RAW_ENTRIES];
- /* Pointers inside raw entries refer to caller-owned wire bytes. */
 } asp_descriptor;
 /* Return 0 on success, -1 on malformed/truncated input. */
 int asp_decode(const uint8_t *wire, size_t length, asp_descriptor *desc);

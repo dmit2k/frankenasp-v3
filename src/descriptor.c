@@ -1,8 +1,12 @@
 #include "descriptor.h"
+#ifdef ASP_BIONIC
+#include "bionic_compat.h"
+#else
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#endif
 
 static uint16_t le16(const uint8_t *p) {
  return (uint16_t)((uint16_t)p[0] | (uint16_t)((uint16_t)p[1] << 8));

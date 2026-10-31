@@ -1,7 +1,11 @@
 #ifndef FRANKENASP_V3_DESCRIPTOR_H
 #define FRANKENASP_V3_DESCRIPTOR_H
+#ifdef ASP_BIONIC
+#include "bionic_compat.h"
+#else
 #include <stddef.h>
 #include <stdint.h>
+#endif
 #define ASP_HEADER_BYTES 16u
 #define ASP_BUFFER_BYTES 28u
 #define ASP_CHANNEL_BYTES 8u

@@ -79,6 +79,21 @@ func backupArchives() []string {
 	sort.Strings(out)
 	return out
 }
+
+// On Android, /data can legitimately belong to the reserved system UID/GID
+// (1000:1000). Trust only that exact ancestor with non-world-writable
+// permissions; every other deployment ancestor must still be root-owned.
+// Never follow symbolic links, including on the Android /data mount point.
+func trustedDeploymentAncestor(cursor string, mode os.FileMode, uid, gid uint32) bool {
+	if !mode.IsDir() || mode&os.ModeSymlink != 0 {
+		return false
+	}
+	if uid == 0 {
+		return true
+	}
+	return cursor == "/data" && uid == 1000 && gid == 1000 && mode.Perm() == 0771 && mode&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) == 0
+}
+
 func checkParent() error {
 	p := parentPath()
 	for cursor := p; cursor != "/"; cursor = filepath.Dir(cursor) {
@@ -87,7 +102,7 @@ func checkParent() error {
 			return e
 		}
 		ss, ok := entry.Sys().(*syscall.Stat_t)
-		if !ok || !entry.IsDir() || entry.Mode()&os.ModeSymlink != 0 || ss.Uid != 0 {
+		if !ok || !trustedDeploymentAncestor(cursor, entry.Mode(), ss.Uid, ss.Gid) {
 			return fmt.Errorf("unsafe deployment ancestor %s", cursor)
 		}
 	}

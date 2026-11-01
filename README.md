@@ -6,7 +6,7 @@ External factory audio DSP helper for TECHO5, built per device platform.
 
 The Echo Show 8 (2nd generation) and Echo Spot (1st generation) are both appealing local voice satellites, with four microphones and capable audio hardware. But wake-word detection with TECHO5's open-source audio frontend can be disappointing, especially when an Echo is playing music. On the Show 8, stereo music playback makes the problem considerably more apparent.
 
-While researching Athena's original audio architecture, I was able to run Amazon's factory Audio Signal Processor (ASP) through **FrankenASP**, an experimental external audio frontend feeding TECHO5's existing voice pipeline. FrankenASP now enables the same kind of controlled comparison on either supported Echo model: **the same physical device, microphone array, microWakeWord model, room, speech recordings, playback conditions, and automated scoring — but different audio processing before the detector.**
+While researching Athena's original audio architecture, I designed and implemented **FrankenASP** specifically to compare TECHO5's open-source audio processing against Amazon's original factory Audio Signal Processor (ASP). FrankenASP runs the factory ASP in an external helper and feeds its processed audio into TECHO5's existing voice pipeline. It now enables controlled comparisons on either supported Echo model: **the same physical device, microphone array, microWakeWord model, room, speech recordings, playback conditions, and automated scoring — but different audio processing before the detector.**
 
 The difference was striking. [Read about the testing process and results](docs/athena-acoustic-comparison-20261025.md).
 

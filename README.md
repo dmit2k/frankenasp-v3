@@ -4,8 +4,10 @@ External factory audio DSP helper for TECHO5, built per device platform.
 
 ## Platforms
 
-- `platforms/athena/` — Echo Show 8 (2nd generation): ARM32 launcher and factory ASP helper source, build scripts, offline tests and fixtures.
-- `platforms/rook/` — Echo Spot (1st generation): ARM32/Bionic factory helper, secure launcher, native tests and offline build scripts. Hardware acceptance is pending.
+- `platforms/athena/` — Echo Show 8 (2nd generation): ARM32 launcher and factory ASP helper source, build scripts, offline tests and fixtures. **Tested on a physical Echo Show 8 (2nd gen).**
+- `platforms/rook/` — Echo Spot (1st generation, 2017): ARM32/Bionic factory helper, secure launcher, native tests and offline build scripts. **Tested on a physical Echo Spot (1st gen).**
+
+Both implementations have been deployed and exercised with TECHO5 and the original factory DSP on real devices; validation is not limited to emulation or offline tests. These are the only Echo models currently available to the maintainer. Other models have **not** been adapted or tested because the maintainer does not have access to their hardware; support for other models must not be assumed. Adding a model requires device-specific adaptation and on-device verification.
 
 Both implementations remain platform-specific. The rook build reuses the existing PCM-only descriptor and I/O source without changing athena or introducing a shared factory backend.
 

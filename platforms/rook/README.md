@@ -59,11 +59,16 @@ owner-selected system/vendor source pair. It does not use the device's older
 live vendor configuration. Build and native tests do not mount or modify a
 running device.
 
-## Acceptance limitations
+## Hardware validation and limitations
 
-The original factory DSP has run in a full-system offline VM with compatible
-runtime assets and synthetic PCM. This is not evidence of real-time behavior,
-valid physical MIC/REF mapping, calibration accuracy, false wake prevention,
-or voice quality on a real Spot. Native Linux 4.9 mount namespace, chroot,
-capabilities and launcher process timing still require separately authorized
-hardware tests. A change to an active TECHO5 service is not part of this stage.
+The rook helper has been built, deployed and tested on a **physical Echo Spot
+(1st generation, 2017)** with TECHO5 External ASP and the original factory DSP. On-device tests have exercised the secure launcher, isolated Bionic
+runtime and PCM processing; the External ASP path has also run in a live
+TECHO5 session. Native tests and a full-system offline VM were used in
+addition to, not instead of, device testing.
+
+This confirms hardware operation on the tested Spot, not exhaustive acoustic
+qualification (for example, false-wake rates or voice quality in all
+conditions). The maintainer does not have other Echo models available for
+adaptation or hardware validation. Other models are neither supported nor
+claimed compatible without their own device-specific work and testing.

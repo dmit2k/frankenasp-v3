@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -61,5 +62,39 @@ func TestChannelMap(t *testing.T) {
 		if validateChannelMap([]byte(s)) == nil {
 			t.Fatal("accepted invalid channel map:", s)
 		}
+	}
+}
+
+func TestRetainedDownloadNameAndOptionalCleanup(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("firmware fixture")) }))
+	defer server.Close()
+	dir := t.TempDir()
+	path, cleanup, err := download(context.Background(), server.URL+"/update-test.bin", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(filepath.Base(path), "asp-installer-ota-") || !strings.HasSuffix(path, "update-test.bin") {
+		t.Fatalf("unusable retained filename: %s", path)
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != "firmware fixture" {
+		t.Fatalf("retained archive inaccessible: %v", err)
+	}
+	// The CLI does not call cleanup by default; archive persists until owner deletes it.
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+	cleanup() // Only called by the explicit delete-after-use option.
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("explicit cleanup failed: %v", err)
+	}
+}
+func TestSanitizeRetainedDownloadName(t *testing.T) {
+	for _, name := range []string{"..", ".", ".hidden", ""} {
+		if got := safeOTAName(name); got != "firmware.bin" {
+			t.Errorf("unsafe name %q: %q", name, got)
+		}
+	}
+	if got := safeOTAName("firmware 7080.bin"); got != "firmware_7080.bin" {
+		t.Fatal(got)
 	}
 }

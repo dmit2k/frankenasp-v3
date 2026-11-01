@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -140,7 +141,33 @@ func downloadWithReserve(ctx context.Context, raw, dir string, extraReserve uint
 		cleanup()
 		return "", nil, e
 	}
-	return filepath.Clean(p), func() { _ = os.Remove(p) }, nil
+	// Complete downloads are retained by default, with an owner-visible safe filename.
+	// A random suffix prevents replacing existing OTA archives of the same release.
+	name := safeOTAName(path.Base(u.Path))
+	final := filepath.Join(dir, "asp-installer-ota-"+nonce()+"-"+name)
+	if e = unix.Renameat2(unix.AT_FDCWD, p, unix.AT_FDCWD, final, unix.RENAME_NOREPLACE); e != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("retain downloaded OTA: %w", e)
+	}
+	return filepath.Clean(final), func() { _ = os.Remove(final) }, nil
+}
+func safeOTAName(original string) string {
+	if len(original) > 100 {
+		original = original[len(original)-100:]
+	}
+	var b strings.Builder
+	for _, r := range original {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	result := b.String()
+	if result == "" || result == "." || result == ".." || strings.HasPrefix(result, ".") {
+		return "firmware.bin"
+	}
+	return result
 }
 func redactSource(source string) string {
 	if strings.Contains(source, "://") {

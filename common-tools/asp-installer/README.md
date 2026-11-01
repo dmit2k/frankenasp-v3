@@ -13,7 +13,7 @@ The public archive contains only the FrankenASP installer, native launcher, ARM3
 
 The extractor uses selective ext4 reads, at most 96 MiB retained blocks per partition, at most 64 streaming passes, and a bounded ELF dependency closure. No partition images are written. Factory DSP compatibility and acoustic results still require testing on actual hardware.
 
-**User-controlled source policy:** OTA signatures, full-image SHA and TLS certificate/hostname checks are not required. Self-signed/untrusted HTTPS sources are accepted by design, so network tampering is possible. URL downloads are limited to 2 GiB and use a private temporary file; local --ota paths are never removed.
+**User-controlled source policy:** OTA signatures, full-image SHA and TLS certificate/hostname checks are not required. Self-signed/untrusted HTTPS sources are accepted by design, so network tampering is possible. URL downloads are limited to 2 GiB and use a private temporary file until fully verified for transport completeness. Completed OTA downloads are **retained by default** as private files with unique readable names; local `--ota` paths are never removed.
 
 ## Build ARM32 release archives
 
@@ -43,11 +43,17 @@ cd frankenasp-athena
 
 ./asp-installer version
 ./asp-installer inspect --ota /data/techo5-linux/update.bin
+./asp-installer status
+./asp-installer status-json
 ./asp-installer check --ota /data/techo5-linux/update.bin
+./asp-installer check-json --ota /data/techo5-linux/update.bin
 ./asp-installer check-vendor --ota /data/techo5-linux/update.bin
+./asp-installer check-vendor-json --ota /data/techo5-linux/update.bin
 ```
 
-Instead of `--ota FILE`, use `--ota-url 'https://user-selected-host/path/update.bin'` for a direct device download. The release manifest selects the platform automatically. All long operations print phase messages on stderr and an activity spinner when attached to a terminal; JSON results remain on stdout.
+Instead of `--ota FILE`, use `--ota-url 'https://user-selected-host/path/update.bin'` for a direct device download. The release manifest selects the platform automatically. A successfully downloaded OTA is **not deleted**. Its exact location is printed, for example `/data/techo5-linux/asp-installer-ota-<random>-update.bin`. Reuse this file in subsequent operations with `--ota /data/techo5-linux/asp-installer-ota-...-update.bin` to avoid downloading again. Partial/failed downloads are cleaned up automatically. Add **`--delete-downloaded-ota`** to a command using `--ota-url` only when you explicitly want the successfully downloaded file deleted at the end of that operation (including on later extraction failure).
+
+`status`, `check`, and `check-vendor` print human-readable summaries. Use `status-json`, `check-json`, or `check-vendor-json` for full machine-readable JSON with the same respective flags. `inspect` and mutation commands continue returning JSON. All long operations print phase messages on stderr and a single-line activity spinner when attached to a terminal; structured results remain on stdout. A progress *scan* is **not a single file**: it is another pass through a compressed `system` or `vendor` partition to collect missing ext4 blocks that may serve multiple libraries. Output includes the monotonically increasing overall scan number and a per-partition pass counter; on-screen spinner lines are erased before log messages and on exit.
 
 ## Install and update
 
@@ -69,7 +75,9 @@ The installer scans process executable identities, open file descriptors, memory
 
 ```sh
 ./asp-installer check --ota /data/techo5-linux/update.bin
+./asp-installer check-json --ota /data/techo5-linux/update.bin
 ./asp-installer check-vendor --ota /data/techo5-linux/update.bin
+./asp-installer check-vendor-json --ota /data/techo5-linux/update.bin
 ```
 
 `check` compares extracted OTA files, current release launcher/helper, Athena channel map and launcher profile to the installed runtime. It reports missing, different and extra installed runtime files; generated receipt timestamps are excluded. For a live-vendor deployment, it additionally compares the actual vendor files.

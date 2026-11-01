@@ -24,9 +24,14 @@ func main() {
 }
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: asp-installer <inspect|check|check-vendor|install|update|uninstall|rollback|status|version> [flags]")
+		return errors.New("usage: asp-installer <inspect|check|check-json|check-vendor|check-vendor-json|install|update|uninstall|rollback|status|status-json|version> [flags]")
 	}
-	cmd := os.Args[1]
+	selected := os.Args[1]
+	jsonOutput := selected == "status-json" || selected == "check-vendor-json" || selected == "check-json"
+	cmd := selected
+	if jsonOutput {
+		cmd = strings.TrimSuffix(selected, "-json")
+	}
 	if cmd == "version" {
 		printJSON(map[string]string{"version": revision})
 		return nil
@@ -35,7 +40,12 @@ func run() error {
 		if len(os.Args) != 2 {
 			return errors.New("status takes no arguments")
 		}
-		printJSON(map[string]any{"current": installedVersion(), "generations": generationInfo(), "backup_archives": backupArchives(), "incomplete_operations": incompleteOperations()})
+		result := statusData()
+		if jsonOutput {
+			printJSON(result)
+		} else {
+			printStatus(os.Stdout, result)
+		}
 		return nil
 	}
 	switch cmd {
@@ -54,12 +64,16 @@ func run() error {
 	restart := f.Bool("restart-techo5", false, "mutations only: allow verified PID1-supervised Linux TECHO5 daemon restart if required")
 	purge := f.Bool("purge-backups", false, "uninstall only: also remove installer-created backups")
 	confirm := f.Bool("yes", false, "explicitly authorize mutation")
+	removeOTA := f.Bool("delete-downloaded-ota", false, "delete a successfully downloaded OTA after this command (default: retain)")
 	generation := f.String("generation", "", "rollback generation name from status")
 	if e := f.Parse(os.Args[2:]); e != nil {
 		return e
 	}
 	if f.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
+	}
+	if *removeOTA && *otaURL == "" {
+		return errors.New("--delete-downloaded-ota requires --ota-url")
 	}
 	mutating := cmd == "install" || cmd == "update" || cmd == "uninstall" || cmd == "rollback"
 	if mutating && !*confirm {
@@ -97,6 +111,7 @@ func run() error {
 		if e != nil {
 			return e
 		}
+		meter.Stop()
 		printJSON(out)
 		return nil
 	}
@@ -185,7 +200,12 @@ func run() error {
 		if e != nil {
 			return e
 		}
-		defer cleanup()
+		if *removeOTA {
+			defer cleanup()
+			meter.Note("Downloaded OTA will be deleted after this operation: " + source)
+		} else {
+			meter.Note("OTA retained for reuse: " + source)
+		}
 	}
 	meter.Phase("Opening OTA and recognizing partition format")
 	src, handle, e := openOTA(source, *platform)
@@ -195,8 +215,12 @@ func run() error {
 	defer handle.Close()
 	for _, reader := range src.selective {
 		reader.ctx = ctx
+		reader.meter = meter
 	}
 	meter.Phase("Selectively extracting factory libraries and transitive ELF dependencies")
+	if len(src.selective) > 0 {
+		meter.Note("Each numbered scan re-reads a compressed partition stream to retrieve blocks for several files; system and vendor have separate pass counts.")
+	}
 	collected := newCollector(src)
 	if e = collected.closure(*platform, child); e != nil {
 		return fmt.Errorf("factory dependency closure: %w", e)
@@ -206,7 +230,11 @@ func run() error {
 		total += len(raw)
 	}
 	summary := map[string]any{"platform": *platform, "ota_format": src.kind, "factory_files": len(collected.items), "factory_bytes": total, "dependency_edges": collected.edgeCount}
+	if *otaURL != "" {
+		summary["downloaded_ota"] = map[string]any{"path": source, "retained": !*removeOTA}
+	}
 	if cmd == "inspect" {
+		meter.Stop()
 		printJSON(summary)
 		return nil
 	}
@@ -224,7 +252,12 @@ func run() error {
 		} else {
 			summary["recommendation"] = "use matched bundled vendor rootfs"
 		}
-		printJSON(summary)
+		meter.Stop()
+		if jsonOutput {
+			printJSON(summary)
+		} else {
+			printVendorCheck(os.Stdout, summary)
+		}
 		return nil
 	}
 	mode, inspection, e := chooseVendorMode(*platform, *vendorMode, collected.items)
@@ -262,7 +295,12 @@ func run() error {
 				summary["update_required"] = true
 			}
 		}
-		printJSON(summary)
+		meter.Stop()
+		if jsonOutput {
+			printJSON(summary)
+		} else {
+			printRuntimeCheck(os.Stdout, summary)
+		}
 		return nil
 	}
 	if e = ctx.Err(); e != nil {
@@ -274,6 +312,7 @@ func run() error {
 			return err
 		}
 		summary["result"] = result
+		meter.Stop()
 		printJSON(summary)
 		return nil
 	}

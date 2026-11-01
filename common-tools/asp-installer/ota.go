@@ -151,6 +151,8 @@ type selective struct {
 	cache            map[uint64][]byte
 	pending          map[uint64]bool
 	passes           int
+	partition        string
+	meter            *progressMeter
 	compressedBrotli bool
 }
 
@@ -251,6 +253,7 @@ func (s *selective) fill() error {
 	if s.compressedBrotli {
 		reader = brotli.NewReader(r)
 	}
+	beforeBlocks := len(s.cache)
 	w := &streamSelect{s: s}
 	start := time.Now()
 	buf := make([]byte, 256<<10)
@@ -265,7 +268,10 @@ func (s *selective) fill() error {
 	for id := range s.pending {
 		delete(s.pending, id)
 	}
-	fmt.Fprintf(os.Stderr, "asp-installer: selective pass %d, retained %d blocks, %s\n", s.passes, len(s.cache), time.Since(start).Round(time.Second))
+	if s.meter != nil {
+		overall := s.meter.NextScan()
+		s.meter.Note(fmt.Sprintf("Scan %d: %s partition, pass %d — +%d blocks, %d retained (%.1f MiB), %s", overall, s.partition, s.passes, len(s.cache)-beforeBlocks, len(s.cache), float64(len(s.cache)*blockSize)/(1<<20), time.Since(start).Round(time.Second)))
+	}
 	return nil
 }
 
@@ -384,7 +390,7 @@ func openOTA(path, platform string) (*otaSources, *os.File, error) {
 		if member == nil {
 			return closeOnErr(fmt.Errorf("missing %s new.dat", part))
 		}
-		s := &selective{file: member, plan: plan, size: int64(plan.blocks * blockSize), cache: map[uint64][]byte{}, pending: map[uint64]bool{}, compressedBrotli: isBr}
+		s := &selective{file: member, partition: part, plan: plan, size: int64(plan.blocks * blockSize), cache: map[uint64][]byte{}, pending: map[uint64]bool{}, compressedBrotli: isBr}
 		out.selective = append(out.selective, s)
 		prefix := ""
 		if platform == "athena" && part == "system" {

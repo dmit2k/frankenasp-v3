@@ -9,7 +9,7 @@ The FrankenASP release package contains the installer, its Linux launcher, the B
 ## Requirements and package layout
 
 - A supported Echo running TECHO5 with root shell access and the compatible External ASP host integration.
-- The matching `frankenasp-v3.1-athena-arm32.tar.gz` or `frankenasp-v3.1-rook-arm32.tar.gz` package, built for the target platform.
+- The matching versioned `frankenasp-v<version>-athena-arm32.tar.gz` or `frankenasp-v<version>-rook-arm32.tar.gz` package, built for the target platform.
 - A compatible **full** Amazon OTA ZIP, unless the required extracted firmware cache already exists.
 - Sufficient free storage for a new OTA download, extracted cache, and any requested runtime backup.
 

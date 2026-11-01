@@ -52,27 +52,12 @@ jobs:
         run: |
           set -euo pipefail
           version="${TAG#v}"
-          cat > release-notes.txt <<EOF
-          FrankenASP V3 ${version}
-
-          Native ARM32 FrankenASP launcher, Bionic factory ASP helper and installer for:
-          - Echo Show 8 (2nd generation; athena)
-          - Echo Spot (1st generation; rook)
-
-          Each platform archive contains FrankenASP-owned code only. Amazon firmware,
-          factory libraries and calibration data are NOT included. Provide your own
-          compatible full OTA image or a verified local factory cache.
-
-          Installation and maintenance instructions:
-          https://github.com/${GH_REPO}/blob/${TAG}/docs/ASP-INSTALL.md
-
-          The optional host-side External ASP integration is maintained separately
-          in the dmit2k/techo5 fork and is not included in these archives.
-          EOF
+          notes_file="docs/releases/${TAG}.md"
+          test -s "$notes_file" || { echo "Missing release notes: $notes_file" >&2; exit 1; }
           gh release create "$TAG" \
             "release-assets/frankenasp-${TAG}-athena-arm32.tar.gz" \
             "release-assets/frankenasp-${TAG}-rook-arm32.tar.gz" \
             "release-assets/SHA256SUMS" \
             --verify-tag \
             --title "FrankenASP ${version}" \
-            --notes-file release-notes.txt
+            --notes-file "$notes_file"

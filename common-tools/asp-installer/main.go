@@ -59,6 +59,8 @@ func run() error {
 	otaURL := f.String("ota-url", "", "owner-selected OTA HTTP(S) URL")
 	assets := f.String("assets", "./assets", "directory with release launcher/helper/config assets")
 	tmp := f.String("tmp-dir", "/data/techo5-linux", "temporary OTA download directory")
+	cachePath := f.String("cache-dir", cacheDefaultPath(), "persistent SHA-256 verified extracted OTA cache directory")
+	refreshCache := f.Bool("refresh-cache", false, "redownload and re-extract selected OTA, atomically replacing an existing cache")
 	vendorMode := f.String("vendor-mode", "auto", "auto|bundled|live; Rook always bundled")
 	forceNoBackup := f.Bool("force-no-backup", false, "update only: skip archive backup (previous generation still retained)")
 	restart := f.Bool("restart-techo5", false, "mutations only: allow verified PID1-supervised Linux TECHO5 daemon restart if required")
@@ -75,6 +77,13 @@ func run() error {
 	if *removeOTA && *otaURL == "" {
 		return errors.New("--delete-downloaded-ota requires --ota-url")
 	}
+	if *cachePath == "" || !filepath.IsAbs(*cachePath) {
+		return errors.New("--cache-dir must be absolute")
+	}
+	if *cachePath == "/" {
+		return errors.New("unsafe cache directory")
+	}
+
 	mutating := cmd == "install" || cmd == "update" || cmd == "uninstall" || cmd == "rollback"
 	if mutating && !*confirm {
 		return errors.New("destructive operation requires explicit --yes; turn External ASP off in TECHO5 settings before maintenance")
@@ -188,50 +197,22 @@ func run() error {
 	if cmd == "update" {
 		meter.Note("Disable External ASP manually in TECHO5 settings to prevent helper respawn")
 	}
-	extraDownloadReserve, e := preflightBeforeOTA(cmd, *otaURL, *tmp, *forceNoBackup, meter)
+	unlock, e := cacheLock(ctx, *cachePath)
 	if e != nil {
 		return e
 	}
-	source := *ota
-	cleanup := func() {}
-	if *otaURL != "" {
-		meter.Phase("Downloading user-selected OTA (without manufacturer SHA or TLS certificate validation)")
-		source, cleanup, e = downloadWithReserve(ctx, *otaURL, *tmp, extraDownloadReserve)
-		if e != nil {
-			return e
-		}
-		if *removeOTA {
-			defer cleanup()
-			meter.Note("Downloaded OTA will be deleted after this operation: " + source)
-		} else {
-			meter.Note("OTA retained for reuse: " + source)
-		}
+	defer unlock()
+	extraction, downloadedOTA, cleanup, e := loadExtracted(ctx, *cachePath, *platform, *ota, *otaURL, *tmp, cmd, child, *forceNoBackup, *refreshCache, *removeOTA, meter)
+	if cleanup != nil && *removeOTA {
+		defer cleanup()
 	}
-	meter.Phase("Opening OTA and recognizing partition format")
-	src, handle, e := openOTA(source, *platform)
 	if e != nil {
 		return e
 	}
-	defer handle.Close()
-	for _, reader := range src.selective {
-		reader.ctx = ctx
-		reader.meter = meter
-	}
-	meter.Phase("Selectively extracting factory libraries and transitive ELF dependencies")
-	if len(src.selective) > 0 {
-		meter.Note("Each numbered scan re-reads a compressed partition stream to retrieve blocks for several files; system and vendor have separate pass counts.")
-	}
-	collected := newCollector(src)
-	if e = collected.closure(*platform, child); e != nil {
-		return fmt.Errorf("factory dependency closure: %w", e)
-	}
-	var total int
-	for _, raw := range collected.items {
-		total += len(raw)
-	}
-	summary := map[string]any{"platform": *platform, "ota_format": src.kind, "factory_files": len(collected.items), "factory_bytes": total, "dependency_edges": collected.edgeCount}
-	if *otaURL != "" {
-		summary["downloaded_ota"] = map[string]any{"path": source, "retained": !*removeOTA}
+	collectedItems := extraction.Items
+	summary := map[string]any{"platform": *platform, "ota_format": extraction.Metadata.OTAFormat, "factory_files": extraction.Metadata.Files, "factory_bytes": extraction.Metadata.Bytes, "dependency_edges": extraction.Metadata.DependencyEdges, "firmware": extraction.Metadata.Firmware, "cache": map[string]any{"hit": extraction.Hit, "path": extraction.Path, "source_sha256": extraction.Metadata.SourceSHA256}}
+	if *otaURL != "" && downloadedOTA != "" {
+		summary["downloaded_ota"] = map[string]any{"path": downloadedOTA, "retained": !*removeOTA}
 	}
 	if cmd == "inspect" {
 		meter.Stop()
@@ -240,7 +221,7 @@ func run() error {
 	}
 	if cmd == "check-vendor" {
 		meter.Phase("Comparing selected OTA vendor files against live /vendor")
-		diff := compareVendor(collected.items, "/vendor")
+		diff := compareVendor(collectedItems, "/vendor")
 		if err := vendorReadOnly(); err != nil {
 			diff.Matching = false
 			diff.Warning = err.Error()
@@ -260,7 +241,7 @@ func run() error {
 		}
 		return nil
 	}
-	mode, inspection, e := chooseVendorMode(*platform, *vendorMode, collected.items)
+	mode, inspection, e := chooseVendorMode(*platform, *vendorMode, collectedItems)
 	if e != nil {
 		return e
 	}
@@ -277,7 +258,7 @@ func run() error {
 				mode = m
 			}
 		}
-		diff, e := compareInstalled(*platform, *assets, collected.items, mode, destination)
+		diff, e := compareInstalled(*platform, *assets, collectedItems, mode, destination)
 		if e != nil {
 			return e
 		}
@@ -285,7 +266,7 @@ func run() error {
 		summary["comparison"] = diff
 		summary["update_required"] = !diff.Matching
 		if mode == "live" && *platform == "athena" {
-			vendorDiff := compareVendor(collected.items, "/vendor")
+			vendorDiff := compareVendor(collectedItems, "/vendor")
 			if err := vendorReadOnly(); err != nil {
 				vendorDiff.Matching = false
 				vendorDiff.Warning = err.Error()
@@ -307,7 +288,7 @@ func run() error {
 		return e
 	}
 	if cmd == "install" || cmd == "update" {
-		result, err := installOrUpdate(*platform, *assets, collected.items, src.kind, mode, cmd == "update", *forceNoBackup, *restart, meter)
+		result, err := installOrUpdate(*platform, *assets, collectedItems, extraction.Metadata.OTAFormat, mode, cmd == "update", *forceNoBackup, *restart, meter)
 		if err != nil {
 			return err
 		}

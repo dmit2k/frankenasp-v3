@@ -280,6 +280,7 @@ type otaSources struct {
 	selective      []*selective
 	kind           string
 	platform       string
+	firmware       string
 }
 type prefixed struct {
 	parent files
@@ -350,7 +351,7 @@ func openOTA(path, platform string) (*otaSources, *os.File, error) {
 	if bytes.Contains(mb, []byte("pre-build=")) || members["payload.bin"] != nil {
 		return closeOnErr(errors.New("incremental/payload OTA unsupported"))
 	}
-	out := &otaSources{platform: platform}
+	out := &otaSources{platform: platform, firmware: firmwareLabel(metadataValue(mb, "post-build"), metadataValue(mb, "post-build-incremental"))}
 	block := members["system.transfer.list"] != nil
 	if !block {
 		out.kind = "ZIP_FILE_TREE"

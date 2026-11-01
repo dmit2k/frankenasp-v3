@@ -13,7 +13,7 @@ The public archive contains only the FrankenASP installer, native launcher, ARM3
 
 The extractor uses selective ext4 reads, at most 96 MiB retained blocks per partition, at most 64 streaming passes, and a bounded ELF dependency closure. No partition images are written. Factory DSP compatibility and acoustic results still require testing on actual hardware.
 
-**User-controlled source policy:** OTA signatures, full-image SHA and TLS certificate/hostname checks are not required. Self-signed/untrusted HTTPS sources are accepted by design, so network tampering is possible. URL downloads are limited to 2 GiB and use a private temporary file until fully verified for transport completeness. Completed OTA downloads are **retained by default** as private files with unique readable names; local `--ota` paths are never removed.
+**User-controlled source policy:** vendor signatures, manufacturer-provided SHA attestations and TLS certificate/hostname checks are not required. The installer independently computes SHA-256 of a local OTA for cache identity; this is not manufacturer authenticity verification. Self-signed/untrusted HTTPS sources are accepted by design, so network tampering is possible. URL downloads are limited to 2 GiB and use a private temporary file until fully verified for transport completeness. Completed OTA downloads are **retained by default** as private files with unique readable names; local `--ota` paths are never removed.
 
 ## Build ARM32 release archives
 
@@ -54,6 +54,34 @@ cd frankenasp-athena
 Instead of `--ota FILE`, use `--ota-url 'https://user-selected-host/path/update.bin'` for a direct device download. The release manifest selects the platform automatically. A successfully downloaded OTA is **not deleted**. Its exact location is printed, for example `/data/techo5-linux/asp-installer-ota-<random>-update.bin`. Reuse this file in subsequent operations with `--ota /data/techo5-linux/asp-installer-ota-...-update.bin` to avoid downloading again. Partial/failed downloads are cleaned up automatically. Add **`--delete-downloaded-ota`** to a command using `--ota-url` only when you explicitly want the successfully downloaded file deleted at the end of that operation (including on later extraction failure).
 
 `status`, `check`, and `check-vendor` print human-readable summaries. Use `status-json`, `check-json`, or `check-vendor-json` for full machine-readable JSON with the same respective flags. `inspect` and mutation commands continue returning JSON. All long operations print phase messages on stderr and a single-line activity spinner when attached to a terminal; structured results remain on stdout. A progress *scan* is **not a single file**: it is another pass through a compressed `system` or `vendor` partition to collect missing ext4 blocks that may serve multiple libraries. Output includes the monotonically increasing overall scan number and a per-partition pass counter; on-screen spinner lines are erased before log messages and on exit.
+
+## Reusable extracted-OTA cache
+
+The costly selective extraction runs **once per OTA content and bundled helper version**. All OTA-aware commands (`inspect`, `check`, `check-json`, `check-vendor`, `check-vendor-json`, `install`, `update`) first look for a **fully verified** extracted runtime cache. The default private cache root on Echo is:
+
+`/data/techo5-linux/asp-installer-cache/`
+
+The per-firmware directory is **human-readable**, for example `athena-PS75741-7080/` or `rook-690918120/`. If a distinct OTA or helper build has the same firmware release label, separate caches are preserved as `athena-PS75741-7080-variant-2/`, `...-variant-3/`, etc. **No hash fragments appear in directory names**: full OTA and helper SHA-256 identifiers are kept in the manifest and checked before reuse. Firmware version is read from the OTA's `META-INF/com/android/metadata` (not guessed from the file name). Inside are `manifest.json` (firmware, platform, full source and helper hashes, OTA format, file count, dependency edges), `SHA256SUMS` (sorted checksums and **paths of every extracted factory artifact**) and `files/system/...`, `files/vendor/...` containing the minimal ELF dependency closure. There are no whole partition images. The root and entries are restricted to the invoking owner, normally root on Echo.
+
+- **Local `--ota FILE`:** compute the SHA-256 of the supplied OTA, locate the matching cached extraction, then check **every cached file** against `SHA256SUMS`, including missing, unexpected, unsafe or modified entries. No partition scans occur on a valid cache hit. Hashing the original OTA still requires one sequential file read, not full decompression.
+- **Remote `--ota-url URL`:** a previously verified cache linked to that exact URL and helper is reusable **without downloading the OTA again**. Its files and inventory are fully rehashed before use. If it is not found, the OTA is downloaded and compared by full content hash against existing caches before performing any extraction.
+- **Changed firmware or helper:** a different cache key requires a new extraction; previous revisions remain available. Partially written caches are not published: extraction is staged and published by an atomic rename, protected by a cross-process cache lock.
+- **Invalid cache:** the command refuses the unsafe cache and reports the problem rather than trusting its contents. Use `--refresh-cache` explicitly to re-extract the selected OTA and atomically replace that cache, or to fetch changed content from a URL.
+
+**Freshness limitation:** a URL-based cache hit does not contact the remote server. If its contents have changed behind the same URL, the installer cannot know without `--refresh-cache` or providing a local OTA to hash. Checksums protect reuse of locally extracted bytes, **not** the identity or authenticity of the OTA publisher. The cache persists independently of downloaded OTA archives and deployed `external-asp` generations; uninstalling the runtime does not silently delete these potentially expensive-to-recreate factory artifacts. Treat them as owner-private data.
+
+Example:
+
+```sh
+./asp-installer inspect --ota-url 'https://your-ota-source/update.bin'
+# Subsequent operations reuse the same cached extraction.
+./asp-installer check-vendor --ota-url 'https://your-ota-source/update.bin'
+./asp-installer check-vendor-json --ota-url 'https://your-ota-source/update.bin'
+# Explicitly rebuild, for example when a URL's firmware content has changed:
+./asp-installer inspect --ota-url 'https://your-ota-source/update.bin' --refresh-cache
+```
+
+When extraction is required, the free-space preflight also reserves room for the private cache in addition to download, staged rootfs, backup and the existing 64 MiB safety margin. `--cache-dir ABSOLUTE_PATH` overrides its location if you intentionally need a different filesystem. Cache validation happens before any installation mutation.
 
 ## Install and update
 

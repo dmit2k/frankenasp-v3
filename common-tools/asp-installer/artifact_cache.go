@@ -32,6 +32,7 @@ type cacheMetadata struct {
 	SourceSHA256    string `json:"source_sha256"`
 	HelperSHA256    string `json:"helper_sha256"`
 	URLSHA256       string `json:"url_sha256,omitempty"`
+	OriginalOTAName string `json:"original_ota_name,omitempty"`
 	OTAFormat       string `json:"ota_format"`
 	Files           int    `json:"files"`
 	Bytes           int    `json:"bytes"`
@@ -284,7 +285,7 @@ func readCache(path string) (cacheResult, error) {
 	if e = json.Unmarshal(data, &meta); e != nil {
 		return cacheResult{}, e
 	}
-	if meta.Schema != cacheSchema || (meta.Platform != "athena" && meta.Platform != "rook") || !firmwarePattern.MatchString(meta.Firmware) || !hexDigest.MatchString(meta.SourceSHA256) || !hexDigest.MatchString(meta.HelperSHA256) || (meta.URLSHA256 != "" && !hexDigest.MatchString(meta.URLSHA256)) || meta.Files < 1 || meta.Files > cacheFileLimit || meta.Bytes < 1 || meta.Bytes > cacheTotalLimit || meta.DependencyEdges < 0 || meta.DependencyEdges > 16384 {
+	if meta.Schema != cacheSchema || (meta.Platform != "athena" && meta.Platform != "rook") || !firmwarePattern.MatchString(meta.Firmware) || !hexDigest.MatchString(meta.SourceSHA256) || !hexDigest.MatchString(meta.HelperSHA256) || (meta.URLSHA256 != "" && !hexDigest.MatchString(meta.URLSHA256)) || (meta.OriginalOTAName != "" && (meta.OriginalOTAName != safeOTAName(meta.OriginalOTAName) || strings.Contains(meta.OriginalOTAName, "/"))) || meta.Files < 1 || meta.Files > cacheFileLimit || meta.Bytes < 1 || meta.Bytes > cacheTotalLimit || meta.DependencyEdges < 0 || meta.DependencyEdges > 16384 {
 		return cacheResult{}, errors.New("invalid cache manifest")
 	}
 	if !cacheMatchesName(filepath.Base(path), meta) {

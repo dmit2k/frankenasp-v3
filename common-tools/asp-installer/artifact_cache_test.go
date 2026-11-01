@@ -124,7 +124,7 @@ func TestCachedSourceSkipsExtractionAndDownload(t *testing.T) {
 	base, saved := fixtureCache(t)
 	var output bytes.Buffer
 	meter := &progressMeter{out: &output, done: make(chan struct{})}
-	result, downloaded, cleanup, e := loadExtracted(context.Background(), base, "athena", "", "https://example.invalid/ota.bin", t.TempDir(), "check-vendor", []byte("fake helper"), false, false, false, meter)
+	result, downloaded, cleanup, e := loadExtracted(context.Background(), base, "athena", "", "https://example.invalid/ota.bin", "", t.TempDir(), "check-vendor", []byte("fake helper"), false, false, false, meter)
 	meter.Close()
 	if e != nil || !result.Hit || downloaded != "" || cleanup != nil {
 		t.Fatalf("cache failed to skip network: %v %v", result.Hit, e)

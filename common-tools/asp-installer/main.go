@@ -54,10 +54,15 @@ func run() error {
 		return nil
 	}
 	if cmd == "status" {
-		if len(os.Args) != 2 {
-			return errors.New("status takes no arguments")
+		sf := flag.NewFlagSet("status", flag.ContinueOnError)
+		cacheRoot := sf.String("cache-dir", cacheDefaultPath(), "private OTA and extracted cache root")
+		if e := sf.Parse(os.Args[2:]); e != nil {
+			return e
 		}
-		result := statusData()
+		if sf.NArg() != 0 || !filepath.IsAbs(*cacheRoot) || *cacheRoot == "/" {
+			return errors.New("status accepts only --cache-dir ABSOLUTE_PATH")
+		}
+		result := statusData(*cacheRoot)
 		if jsonOutput {
 			printJSON(result)
 		} else {
@@ -74,6 +79,7 @@ func run() error {
 	platform := f.String("platform", "", "athena|rook; normally detected from release manifest")
 	ota := f.String("ota", "", "local OTA ZIP on Echo")
 	otaURL := f.String("ota-url", "", "owner-selected OTA HTTP(S) URL")
+	firmware := f.String("firmware", "", "select already-extracted cached firmware version or variant by name; omit OTA for cached use")
 	assets := f.String("assets", "./assets", "directory with release launcher/helper/config assets")
 	tmp := f.String("tmp-dir", "/data/techo5-linux", "temporary OTA download directory")
 	cachePath := f.String("cache-dir", cacheDefaultPath(), "persistent SHA-256 verified extracted OTA cache directory")
@@ -141,8 +147,17 @@ func run() error {
 		printJSON(out)
 		return nil
 	}
-	if (*ota == "") == (*otaURL == "") {
-		return errors.New("select exactly one --ota or --ota-url")
+	if *ota != "" && *otaURL != "" {
+		return errors.New("select only one --ota or --ota-url")
+	}
+	if *firmware != "" && (*ota != "" || *otaURL != "") {
+		return errors.New("--firmware selects a cached extraction; omit --ota and --ota-url")
+	}
+	if *refreshCache && *ota == "" && *otaURL == "" {
+		return errors.New("--refresh-cache requires --ota or --ota-url")
+	}
+	if *firmware != "" && (!safePath(*firmware) || strings.Contains(*firmware, "/")) {
+		return errors.New("unsafe --firmware version or cache name")
 	}
 	manifestRaw, e := os.ReadFile(filepath.Join(*assets, "manifest.json"))
 	if e != nil {
@@ -219,7 +234,7 @@ func run() error {
 		return e
 	}
 	defer unlock()
-	extraction, downloadedOTA, cleanup, e := loadExtracted(ctx, *cachePath, *platform, *ota, *otaURL, *tmp, cmd, child, *forceNoBackup, *refreshCache, *removeOTA, meter)
+	extraction, downloadedOTA, cleanup, e := loadExtracted(ctx, *cachePath, *platform, *ota, *otaURL, *firmware, *tmp, cmd, child, *forceNoBackup, *refreshCache, *removeOTA, meter)
 	if cleanup != nil && *removeOTA {
 		defer cleanup()
 	}

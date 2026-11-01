@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 )
@@ -29,8 +30,9 @@ func boolField(m map[string]any, key string) bool {
 	b, _ := m[key].(bool)
 	return b
 }
-func statusData() map[string]any {
-	return map[string]any{"current": installedVersion(), "generations": generationInfo(), "backup_archives": backupArchives(), "incomplete_operations": incompleteOperations()}
+func statusData(cacheRoot string) map[string]any {
+	extracted, images := cacheInventory(context.Background(), cacheRoot)
+	return map[string]any{"current": installedVersion(), "generations": generationInfo(), "backup_archives": backupArchives(), "incomplete_operations": incompleteOperations(), "cache_root": cacheRoot, "extracted_caches": extracted, "ota_images": images}
 }
 func printStatus(w io.Writer, v map[string]any) {
 	current := mapField(v["current"])
@@ -63,6 +65,25 @@ func printStatus(w io.Writer, v map[string]any) {
 		}
 	} else {
 		fmt.Fprintln(w, "Incomplete operations: none")
+	}
+	extracted, _ := v["extracted_caches"].([]extractionStatus)
+	images, _ := v["ota_images"].([]imageStatus)
+	fmt.Fprintf(w, "Cache root: %s\nExtracted caches: %d\n", textField(v, "cache_root"), len(extracted))
+	for _, c := range extracted {
+		fmt.Fprintf(w, "  %s [%s, %d factory files]\n    %s\n", c.Firmware, c.State, c.FactoryFiles, c.Path)
+		if c.OTAImage != "" {
+			fmt.Fprintf(w, "    OTA: %s\n", c.OTAImage)
+		}
+		if c.Error != "" {
+			fmt.Fprintf(w, "    WARNING: %s\n", c.Error)
+		}
+	}
+	fmt.Fprintf(w, "OTA images: %d\n", len(images))
+	for _, img := range images {
+		fmt.Fprintf(w, "  %s [%s, %d MiB]\n    %s\n", img.Firmware, img.State, mbCeil(uint64(img.SizeBytes)), img.Path)
+		if img.Error != "" {
+			fmt.Fprintf(w, "    WARNING: %s\n", img.Error)
+		}
 	}
 	fmt.Fprintln(w, "More details: asp-installer status-json")
 }

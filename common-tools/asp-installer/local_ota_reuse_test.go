@@ -29,7 +29,7 @@ func TestDownloadedLocalOTAReusedWithoutHTTP(t *testing.T) {
 	}
 	var log bytes.Buffer
 	meter := &progressMeter{out: &log, done: make(chan struct{})}
-	got, downloaded, cleanup, e := loadExtracted(context.Background(), base, "athena", "", sourceURL, dir, "inspect", []byte("fake helper"), false, false, false, meter)
+	got, downloaded, cleanup, e := loadExtracted(context.Background(), base, "athena", "", sourceURL, "", dir, "inspect", []byte("fake helper"), false, false, false, meter)
 	meter.Close()
 	if e != nil || !got.Hit || got.Path != cached.Path || downloaded != "" || cleanup != nil {
 		t.Fatalf("failed local cache reuse: hit=%t err=%v", got.Hit, e)
@@ -74,7 +74,7 @@ func TestDifferentLocalOTANeverMasqueradesAsURLCache(t *testing.T) {
 	}))
 	defer server.Close()
 	meter := &progressMeter{out: &bytes.Buffer{}, done: make(chan struct{})}
-	_, _, _, e := loadExtracted(context.Background(), base, "athena", "", server.URL+"/update-test.bin", dir, "inspect", []byte("fake helper"), false, false, false, meter)
+	_, _, _, e := loadExtracted(context.Background(), base, "athena", "", server.URL+"/update-test.bin", "", dir, "inspect", []byte("fake helper"), false, false, false, meter)
 	meter.Close()
 	if e == nil || !strings.Contains(e.Error(), "OTA HTTP status 502") {
 		t.Fatalf("wrong local file did not fall back to network: %v", e)
@@ -158,7 +158,7 @@ func TestRefreshCacheForcesNetworkEvenWithLocalAndCache(t *testing.T) {
 	}))
 	defer server.Close()
 	meter := &progressMeter{out: &bytes.Buffer{}, done: make(chan struct{})}
-	_, _, _, e := loadExtracted(context.Background(), base, "athena", "", server.URL+"/update-test.bin", dir, "inspect", []byte("fake helper"), false, true, false, meter)
+	_, _, _, e := loadExtracted(context.Background(), base, "athena", "", server.URL+"/update-test.bin", "", dir, "inspect", []byte("fake helper"), false, true, false, meter)
 	meter.Close()
 	if e == nil || !strings.Contains(e.Error(), "OTA HTTP status 502") {
 		t.Fatalf("refresh did not perform network request: %v", e)

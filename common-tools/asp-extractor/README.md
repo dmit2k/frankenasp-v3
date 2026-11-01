@@ -1,0 +1,147 @@
+# asp-extractor — Linux x86_64
+
+Desktop companion to the embedded FrankenASP V3 `asp-installer`. It prepares
+**owner-local** factory ASP caches using the **same** selective OTA reader,
+ext4 reader, ARM ELF closure and SHA-256 cache code as the embedded installer,
+without copying full OTA images to an Echo.
+
+**Supported host:** Linux x86_64 only. **Targets:** Athena (Echo Show 8 Gen 2)
+and Rook (Echo Spot 2017). No incremental OTA support.
+
+## Build and tests
+
+Requires Go 1.26.9 at build time (and a C toolchain for race tests).
+
+```sh
+cd common-tools/asp-extractor
+GO=/path/to/go1.26.9/bin/go ./build.sh
+GO=/path/to/go1.26.9/bin/go ./test.sh
+# Package only this project's own executable and text (no Amazon files):
+./package.sh dist/asp-extractor-v<VERSION>-linux-amd64
+```
+
+The build emits `dist/asp-extractor-v<VERSION>-linux-amd64`, with the
+repository's existing release-policy resolver. The binary is statically
+linked (`CGO_ENABLED=0`); no Go, glibc, SSH/SCP, mount or image utilities
+are needed at runtime. Untagged builds include the UTC suffix defined in
+`docs/RELEASING.md`. **No new GitHub Release is implied by building.**
+
+The original `asp-installer` is a `package main`. To preserve its working
+ABI, functions and cache format **without changing it**, the build script
+copies its Go source files *verbatim* (excluding its CLI entrypoint and tests)
+into a disposable build directory, together with the desktop CLI and OS
+adapter. No parser source is duplicated in Git; there is one compiled copy
+per binary. The embedded installer remains independently buildable using
+its original command. This composition is deliberate and can later be
+replaced with a narrow shared package if that becomes justified.
+
+## Local storage
+
+Default: `$XDG_CACHE_HOME/frankenasp/asp-extractor/asp-installer-cache/`,
+or `$HOME/.cache/frankenasp/asp-extractor/asp-installer-cache/`.
+Override with `--cache-dir ABSOLUTE_PATH` on any command.
+
+The cache has the embedded installer's exact structure:
+`<platform>-<firmware>/manifest.json`, `SHA256SUMS`, `files/`,
+plus optional archived original OTA files in `ota-images/`. It supports
+multiple platform/firmware variants without replacing unrelated caches.
+Re-extraction of a cache matching the supplied OTA and release helper is
+skipped; all reused cache files are SHA-256 checked. Owner-selected backup
+directory paths are indexed separately in the desktop-only
+`asp-extractor-backups.json` next to the cache root, never inside a firmware
+cache; `list` displays the links and reports whether the source remains
+present. This index stores only local paths and references, not backup bytes.
+
+## Examples
+
+```sh
+E=./dist/asp-extractor-v<version>-linux-amd64
+ATHENA=frankenasp-v3.2-athena-arm32.tar.gz
+ROOK=frankenasp-v3.2-rook-arm32.tar.gz
+
+# Extract from a full OTA ZIP using the selected release's real ARM32 helper.
+"$E" --platform athena extract --ota update-kindle-athena-7080.bin --release "$ATHENA"
+"$E" --platform rook extract --ota update-kindle-rook.bin --release "$ROOK"
+
+# Or from a directory with real TECHO5 raw ext4 backup partition images.
+"$E" --platform athena extract --backup-dir /backup/athena/partitions --release "$ATHENA"
+"$E" --platform rook extract --backup-dir /backup/rook --release "$ROOK"
+
+"$E" list
+"$E" --platform athena verify --firmware athena-fireos-7574.1-build-PS75741-7080
+
+"$E" --platform athena create-bundle \
+  --firmware athena-fireos-7574.1-build-PS75741-7080 \
+  --release "$ATHENA" --output ./athena-private-bundle.tar.gz
+
+# SSH host keys MUST already be pinned in ~/.ssh/known_hosts.
+"$E" --platform athena deploy-cache --host root@10.0.0.2 --firmware athena-fireos-7574.1-build-PS75741-7080
+"$E" --platform athena deploy-asp --host root@10.0.0.2 --release "$ATHENA"
+"$E" --platform athena deploy-all --host root@10.0.0.2 \
+  --firmware athena-fireos-7574.1-build-PS75741-7080 --release "$ATHENA"
+```
+
+Flags for SSH: `--identity PATH` (default: an unencrypted user SSH private
+key), `--known-hosts PATH` (default: `~/.ssh/known_hosts`), `--port PORT`
+(default 22). No insecure host-key fallback is provided.
+
+`--platform` is mandatory except for `list`. `--firmware` is optional
+only when the selection is unambiguous. If multiple variants have the same
+firmware, use the **exact cache directory name**. `--release` is mandatory
+for extraction because the real Bionic child determines dependency closure.
+
+### Backup layouts
+
+Supported **directory** layouts, using native Go ext4 parsing (no mount):
+
+- Athena: `p21-system.img` and `p12-vendor.img` in the selected directory.
+- Rook: `system.img` in the selected directory (vendor tree under system).
+
+These are the actual TECHO5 backup layouts verified for this release.
+Individual ext4 images inside arbitrary tarballs, whole-device eMMC dumps,
+unknown layouts and incremental OTA are not claimed as supported.
+The backup's actual build properties determine its firmware identity.
+The large source images are only read on PC, never included in bundle or
+sent to Echo. Firmware provenance is owner-controlled: SHA-256 verifies cache
+integrity but does not authenticate Amazon firmware. The inherited embedded
+OTA HTTP downloader does **not** validate HTTPS certificates or hostnames;
+for network downloads, independently verify the supplied image provenance,
+or prefer a locally authenticated OTA.
+
+### Bundle
+
+A private bundle contains one verified cache, a JSON manifest with platform,
+firmware, release version and SHA-256 inventory, and the **unchanged original**
+versioned FrankenASP release archive. It contains no full OTA by default.
+The output path is no-clobber. **Bundles contain proprietary Amazon
+components and must not be uploaded to public GitHub Releases.**
+
+### Deployment boundaries
+
+The only permanent target directories are:
+
+- `/data/techo5-linux/asp-installer-cache/` — one selected verified cache.
+- `/data/techo5-linux/asp-installer-v3/` — the embedded installer package.
+
+Transfers stream and re-read/check SHA-256 using Go SSH and portable remote
+`sh/cat/mkdir/chmod/mv/rm` operations. Staging is private and temporary.
+Existing cache directories are verified, never overwritten. The
+installer's previous package is discarded only after the replacement package
+has been completely transferred and verified; it is not backed up.
+
+**No `deploy-*` command runs the embedded install/update command, touches
+`external-asp/`, changes TECHO5 settings, restarts `echod` or persistence.**
+After delivery the CLI prints the current installer's **manual** commands:
+`./asp-installer status`, then `install --yes` for a new runtime or
+`update --yes` for an existing one, after disabling External ASP manually.
+
+## Desktop OS extension
+
+Host-specific operations belong to `internal/hostos/<os>/` and a
+`select_<os>.go` file with Go build tags. Only the Linux adapter exists;
+it implements Linux/XDG cache-root resolution. The shared CLI, archive,
+OTA/ext4/ELF, cache and Go SSH logic are intentionally OS-independent at
+the API level. Before macOS or Windows builds, isolate the embedded
+Linux-only cache lock, filesystem-stat and secure publish primitives
+behind the corresponding OS adapters; implement only the needed OS
+behavior and test on each target. No platform compatibility is implied yet.

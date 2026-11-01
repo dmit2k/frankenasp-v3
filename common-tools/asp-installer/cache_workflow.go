@@ -75,9 +75,10 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	if e := ctx.Err(); e != nil {
 		return cacheResult{}, "", nil, e
 	}
-	// The download always belongs to the private OTA archive cache, never the
-	// optional read-only search path or a TECHO5-managed parent directory.
-	downloadDir := otaArchiveDir(cacheDir)
+	// Preflight uses the existing private cache root for local OTA sources.
+	// For URL downloads the actual temporary file is created only inside the
+	// private cache's ota-images directory, never the OTA search directory.
+	downloadDir := cacheDir
 	if sourceURL != "" {
 		var err error
 		downloadDir, err = ensureOTADir(cacheDir)

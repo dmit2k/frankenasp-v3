@@ -218,3 +218,49 @@ func TestHelperDependenciesCheckedAfterExtraction(t *testing.T) {
 		t.Fatalf("expected linkable helper: %v", err)
 	}
 }
+
+func TestUnknownDeployAppExplainsCorrectCommands(t *testing.T) {
+	args := []string{
+		"deploy-app", "--host", "root@10.20.30.152",
+		"--asp-release", "/home/gptlab/dev/asp-v33-review-final-release/rook/frankenasp-v3.2.261101221132-rook-arm32.tar.gz",
+		"--firmware", "690918120", "--cache-dir", "/tmp/test-cache",
+	}
+	for _, invocation := range [][]string{args, args[:len(args)-2], append([]string{"--cache-dir", "/tmp/test-cache"}, args...)} {
+		err := runCLI(invocation)
+		if err == nil || !strings.Contains(err.Error(), `unknown command "deploy-app"`) || !strings.Contains(err.Error(), "deploy-asp") || !strings.Contains(err.Error(), "deploy-all") {
+			t.Fatalf("unhelpful unknown-command error for %v: %v", invocation, err)
+		}
+	}
+}
+
+func TestDeployAspRejectsUnusedFirmwareSelector(t *testing.T) {
+	// No SSH or filesystem access must occur for an invalid argument combination.
+	err := runCLI([]string{"deploy-asp", "--host", "root@10.20.30.152", "--firmware", "690918120", "--asp-release", "/tmp/unused.tar.gz"})
+	if err == nil || !strings.Contains(err.Error(), "deploy-all") || !strings.Contains(err.Error(), "--firmware") {
+		t.Fatalf("deploy-asp silently ignored firmware: %v", err)
+	}
+}
+
+func TestCommandDetectionSkipsOptionValuesAndNamesUnknownCommands(t *testing.T) {
+	cases := []struct {
+		args      []string
+		want      int
+		wantError string
+	}{
+		{[]string{"--firmware", "deploy-asp", "deploy-cache"}, 2, ""},
+		{[]string{"--firmware=deploy-asp", "deploy-cache"}, 1, ""},
+		{[]string{"--host", "root@x", "deploy-all"}, 2, ""},
+		{[]string{"unknown-command", "--host", "root@x"}, -1, `unknown command "unknown-command"`},
+		{[]string{"deploy-asp", "deploy-all"}, -1, "multiple commands"},
+	}
+	for _, tc := range cases {
+		index, err := findCommand(tc.args)
+		if tc.wantError != "" {
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("args %v: %v", tc.args, err)
+			}
+		} else if err != nil || index != tc.want {
+			t.Fatalf("args %v: index %d err %v, expected %d", tc.args, index, err, tc.want)
+		}
+	}
+}

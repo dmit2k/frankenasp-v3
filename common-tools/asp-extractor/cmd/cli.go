@@ -36,22 +36,13 @@ func runCLI(args []string) error {
 		fmt.Println("asp-extractor v" + extractorVersion)
 		return nil
 	}
-	commands := map[string]bool{"extract": true, "list": true, "verify": true, "create-bundle": true, "deploy-cache": true, "deploy-asp": true, "deploy-all": true}
-	ix := -1
-	for i, a := range args {
-		if commands[a] {
-			if ix >= 0 {
-				return usageError()
-			}
-			ix = i
-		}
+	if len(args) == 1 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
+		printUsage()
+		return nil
 	}
-	if ix < 0 {
-		if len(args) > 0 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
-			printUsage()
-			return nil
-		}
-		return usageError()
+	ix, err := findCommand(args)
+	if err != nil {
+		return err
 	}
 	cmd := args[ix]
 	filtered := append(append([]string{}, args[:ix]...), args[ix+1:]...)
@@ -157,6 +148,9 @@ func runCLI(args []string) error {
 		o.platform = rel.Platform
 		return createBundle(o)
 	case "deploy-cache", "deploy-asp", "deploy-all":
+		if cmd == "deploy-asp" && o.firmware != "" {
+			return errors.New("deploy-asp sends only the installer; --firmware is not used. Use deploy-all to transfer both the installer and the selected firmware cache")
+		}
 		if o.host == "" {
 			return errors.New("deployment requires --host root@hostname")
 		}
@@ -174,7 +168,51 @@ func runCLI(args []string) error {
 	}
 	return usageError()
 }
-func usageError() error { return errors.New("use asp-extractor help for commands and flags") }
+
+// findCommand recognises options anywhere in the invocation without confusing
+// a flag value for a command. Unknown commands must never produce a generic
+// "see help" error: the user needs to see the bad token and a useful hint.
+func findCommand(args []string) (int, error) {
+	commands := map[string]bool{"extract": true, "list": true, "verify": true, "create-bundle": true, "deploy-cache": true, "deploy-asp": true, "deploy-all": true}
+	valueFlags := map[string]bool{
+		"--platform": true, "--firmware": true, "--cache-dir": true,
+		"--ota": true, "--ota-url": true, "--backup-dir": true,
+		"--asp-release": true, "--output": true, "--host": true,
+		"--identity": true, "--known-hosts": true, "--port": true,
+	}
+	ix := -1
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			flagName, _, attachedValue := strings.Cut(arg, "=")
+			if valueFlags[flagName] && !attachedValue && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		if commands[arg] {
+			if ix >= 0 {
+				return -1, fmt.Errorf("multiple commands %q and %q; choose one", args[ix], arg)
+			}
+			ix = i
+			continue
+		}
+		if ix < 0 {
+			if arg == "deploy-app" {
+				return -1, errors.New("unknown command \"deploy-app\"; use deploy-asp to transfer only the installer, or deploy-all to transfer both installer and firmware cache")
+			}
+			return -1, fmt.Errorf("unknown command %q; valid commands: extract, list, verify, create-bundle, deploy-cache, deploy-asp, deploy-all", arg)
+		}
+	}
+	if ix < 0 {
+		return -1, usageError()
+	}
+	return ix, nil
+}
+
+func usageError() error {
+	return errors.New("missing command; valid commands: extract, list, verify, create-bundle, deploy-cache, deploy-asp, deploy-all (or run asp-extractor help)")
+}
 func printUsage() {
 	fmt.Print(`asp-extractor: offline ASP factory cache and delivery (Linux x86_64)
 
@@ -189,8 +227,8 @@ Commands: extract, list, verify, create-bundle, deploy-cache, deploy-asp, deploy
   verify         [--firmware VERSION_OR_CACHE]
   create-bundle  --firmware VERSION --asp-release FILE --output BUNDLE.tar.gz
   deploy-cache   --host root@ECHO [--firmware VERSION]
-  deploy-asp     --host root@ECHO --asp-release FILE
-  deploy-all     --host root@ECHO --asp-release FILE [--firmware VERSION]
+  deploy-asp     --host root@ECHO --asp-release FILE             (installer only)
+  deploy-all     --host root@ECHO --asp-release FILE [--firmware VERSION] (installer + cache)
 
 Common: --platform, --firmware, --cache-dir, --asp-release,
         --host, --port, --identity, --known-hosts, --output,
@@ -199,7 +237,12 @@ Common: --platform, --firmware, --cache-dir, --asp-release,
 For local OTA and backup extraction, platform is detected automatically.
 For --ota-url, specify --platform.
 --asp-release FILE is a local .tar.gz archive path, NOT a version number.
+--cache-dir is optional; defaults to:
+  $XDG_CACHE_HOME/frankenasp/asp-extractor/asp-installer-cache
+  (or ~/.cache/frankenasp/asp-extractor/asp-installer-cache).
+Use --cache-dir if caches were extracted into a different directory.
 
-The extractor NEVER runs the embedded installer or modifies the active ASP runtime.
+Deployment commands transfer files ONLY. None runs the embedded installer,
+changes the active ASP runtime, or restarts TECHO5.
 `)
 }

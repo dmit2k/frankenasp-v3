@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Build script assigns the immutable installer version (3.0.HHMMSS UTC).
+// Build script assigns the immutable installer version (3.0.YYMMDDHHMMSS UTC).
 // An unpackaged source build advertises itself as development.
 var revision = "3.0.dev"
 

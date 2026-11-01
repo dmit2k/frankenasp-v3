@@ -1,4 +1,4 @@
-module github.com/dmit2k/frankenasp-v3/common-tools/lib-extractor
+module github.com/dmit2k/frankenasp-v3/common-tools/asp-installer
 
 go 1.26.9
 

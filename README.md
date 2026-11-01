@@ -34,6 +34,10 @@ Production ARM32 launcher and Bionic child are built separately using `platforms
 
 **Vendor library files, firmware, calibration data and private runtime images are not distributed with this repository.**
 
+## Native installer (experimental)
+
+The [on-device asp-installer](common-tools/asp-installer/README.md) can selectively extract the required factory runtime from an owner-provided OTA on either supported Echo, compare installed and live-vendor files, install, update with an archive backup, roll back and uninstall. Platform-specific release archives contain only FrankenASP-owned binaries; no Amazon binaries are distributed. Device-side lifecycle operations are currently experimental and require hardware acceptance before public release.
+
 ## Built on TECHO5 — with genuine gratitude
 
 First and foremost, I want to recognize **[HuskerMinion](https://github.com/HuskerMinion) and the [TECHO5 contributors](https://github.com/HuskerMinion/techo5)**.

@@ -2,13 +2,10 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -57,7 +54,7 @@ func fsyncDir(p string) error {
 	defer f.Close()
 	return f.Sync()
 }
-func writeRoot(stage string, platform string, items map[string][]byte, assets string, kind string) error {
+func writeRootWithMode(stage string, platform string, items map[string][]byte, assets string, kind string, mode string) error {
 	root := filepath.Join(stage, "lib", "rootfs")
 	directories := []string{"bin", "etc", "lib/rootfs/factory", "lib/rootfs/system/bin", "lib/rootfs/system/lib", "lib/rootfs/vendor/etc/audio-algorithms", "lib/rootfs/proc/idme", "lib/rootfs/sys", "lib/rootfs/.realproc", "lib/rootfs/dev", "lib/rootfs/data"}
 	for _, n := range directories {
@@ -103,14 +100,10 @@ func writeRoot(stage string, platform string, items map[string][]byte, assets st
 			return e
 		}
 	}
-	if e := ownedFile(filepath.Join(stage, "etc/launcher.profile"), []byte(vendorBundled), 0600); e != nil {
+	if e := ownedFile(filepath.Join(stage, "etc/launcher.profile"), []byte(profileForMode(mode)), 0600); e != nil {
 		return e
 	}
-	aliases := map[string]string{"self": "/.realproc/self", "sys": "/.realproc/sys", "cpuinfo": "/.realproc/cpuinfo", "device-tree": "/sys/firmware/devicetree/base"}
-	for i := 0; i < 4; i++ {
-		aliases[fmt.Sprintf("idme/miccal.%d", i)] = fmt.Sprintf("/proc/device-tree/idme/miccal.%d/value", i)
-	}
-	for name, target := range aliases {
+	for name, target := range aliasTargets() {
 		p := filepath.Join(root, "proc", name)
 		if e := os.Symlink(target, p); e != nil {
 			return e
@@ -119,7 +112,7 @@ func writeRoot(stage string, platform string, items map[string][]byte, assets st
 			return e
 		}
 	}
-	receipt := map[string]any{"schema": "ASP1-INSTALLER-V3", "platform": platform, "runtime_source": kind, "proprietary_binaries_distributed": false, "installed_at": time.Now().UTC().Format(time.RFC3339)}
+	receipt := map[string]any{"schema": "ASP1-INSTALLER-V3", "platform": platform, "runtime_source": kind, "proprietary_binaries_distributed": false, "installed_at": time.Now().UTC().Format(time.RFC3339), "release_revision": revision, "vendor_mode": mode}
 	blob, _ := json.MarshalIndent(receipt, "", "  ")
 	if e := ownedFile(filepath.Join(stage, "etc/installer-receipt.json"), append(blob, '\n'), 0600); e != nil {
 		return e
@@ -136,49 +129,4 @@ func writeRoot(stage string, platform string, items map[string][]byte, assets st
 		}
 		return nil
 	})
-}
-func install(platform, assets string, items map[string][]byte, source string, output string) error {
-	if os.Geteuid() != 0 {
-		return errors.New("installation requires root")
-	}
-	if output != destination {
-		return errors.New("production target is fixed; use --output only in unprivileged inspect")
-	}
-	parent := filepath.Dir(output)
-	info, e := os.Lstat(parent)
-	if e != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("deployment parent missing or not a real directory")
-	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || st.Uid != 0 || info.Mode().Perm()&0022 != 0 {
-		return errors.New("insecure deployment parent ownership or mode")
-	}
-	if _, e = os.Lstat(output); e == nil {
-		return errors.New("destination exists: no automatic replacement of active or unknown installation")
-	}
-	if !os.IsNotExist(e) {
-		return e
-	}
-	var bytes uint64
-	for _, raw := range items {
-		bytes += uint64(len(raw))
-	}
-	if e = enoughSpace(parent, bytes+64<<20); e != nil {
-		return e
-	}
-	stage, e := os.MkdirTemp(parent, ".external-asp-stage-")
-	if e != nil {
-		return e
-	}
-	defer os.RemoveAll(stage)
-	if e = writeRoot(stage, platform, items, assets, source); e != nil {
-		return e
-	}
-	if e = fsyncDir(stage); e != nil {
-		return e
-	}
-	if e = unix.Renameat2(unix.AT_FDCWD, stage, unix.AT_FDCWD, output, unix.RENAME_NOREPLACE); e != nil {
-		return e
-	}
-	return fsyncDir(parent)
 }

@@ -14,9 +14,9 @@ import (
 	"time"
 )
 
-// Build script assigns the immutable installer version (3.0.YYMMDDHHMMSS UTC).
+// The build script supplies the tagged release version or a timestamped build.
 // An unpackaged source build advertises itself as development.
-var revision = "3.0.dev"
+var revision = "3.dev"
 
 func printJSON(v any) { b, _ := json.MarshalIndent(v, "", "  "); fmt.Println(string(b)) }
 func main() {

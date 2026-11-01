@@ -16,10 +16,8 @@ case "$platform" in
 esac
 [[ -f "$launcher" && -f "$child" && ! -e "$out" ]] || { echo "missing binary or output already exists" >&2; exit 2; }
 git_root=$(git rev-parse --show-toplevel)
-# Installer build versions use 3.0.YYMMDDHHMMSS (UTC).
-# Allow the packager to pin the same version across Athena/Rook archives.
-revision=${ASP_INSTALLER_VERSION:-3.0.$(date -u +%y%m%d%H%M%S)}
-[[ "$revision" =~ ^3\.0\.[0-9]{12}$ ]] || { echo "invalid installer version (expected 3.0.YYMMDDHHMMSS): $revision" >&2; exit 2; }
+# Resolve the official release tag or a post-release timestamp automatically.
+revision=$("$git_root/common-tools/asp-installer/resolve-version.sh" "$git_root")
 go_cmd=${GO:-go}
 mkdir -p "$out"
 pkg="$out/frankenasp-$platform"

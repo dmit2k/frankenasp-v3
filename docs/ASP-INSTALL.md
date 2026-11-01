@@ -77,7 +77,7 @@ cd /data/techo5-linux/asp-installer-v3
 
 **Output format:** all commands print readable text by default. Use `--json` on the command to request a structured JSON result. The aliases `status-json`, `check-json`, `check-vendor-json`, and the corresponding `*-json` forms are also accepted. Progress messages, startup version and total elapsed time are printed to **stderr**; JSON results go to **stdout** only.
 
-Every invocation prints `asp-installer v3.0.YYMMDDHHMMSS`, where the suffix is the **UTC date/time of the installer build**, not the Amazon firmware build or the installed FrankenASP runtime revision. The `version` command and its JSON form also return this version.
+Every invocation prints the installer version, for example **`asp-installer v3.1`** for an official release or **`asp-installer v3.1.261101202200`** for a subsequent development build. The date suffix denotes **UTC build date/time** (`YYMMDDHHMMSS`), not the Amazon firmware build or the installed FrankenASP runtime revision. The `version` command and its JSON form also return this version.
 
 ## Options
 
@@ -169,7 +169,13 @@ GO=/path/to/go1.26.9/bin/go ./build-release.sh \
   /path/to/rook-output
 ```
 
-The script produces the matching `frankenasp-v3-<platform>-arm32.tar.gz` package without proprietary Amazon files. Set `ASP_INSTALLER_VERSION=3.0.YYMMDDHHMMSS` to stamp matching packages with an identical build version; otherwise the script generates one using the current UTC time. Launcher and Bionic helper sources and their platform-specific build scripts are under `platforms/athena/` and `platforms/rook/`.
+The script produces the matching `frankenasp-v3-<platform>-arm32.tar.gz` package without proprietary Amazon files. The project-root `VERSION` contains the manually chosen **major.minor** base (for example, `3.1`). On a clean commit carrying an **annotated** tag `v3.1` that matches that file, the build script stamps `3.1`. Otherwise it stamps `3.1.YYMMDDHHMMSS` using UTC build time. Set `SOURCE_DATE_EPOCH` to the same UTC Unix timestamp when building Athena and Rook development packages to give both identical versions. New official releases are created manually by incrementing `VERSION`, committing the change, and tagging that commit with the matching `vMAJOR.MINOR`; never move a published release tag. A later `3.2` release sorts above all prior `3.1.*` development builds. Launcher and Bionic helper sources and their platform-specific build scripts are under `platforms/athena/` and `platforms/rook/`.
+
+## Release versions and maintainer publication
+
+The repository root `VERSION` contains the currently published major/minor base (initially `3.1`). **Releases are chosen manually**, not issued automatically for every commit. The official `v3.1` tag points to the exact source revision of release `3.1`. The build script detects a clean checkout of this annotated tag and stamps `3.1`. Builds from later commits on `main`, from untagged commits, or from locally modified trees are stamped `3.1.YYMMDDHHMMSS` using the UTC build timestamp. The third component makes those builds higher than `3.1` but lower than a future `3.2`. Before release `3.2`, update `VERSION` to `3.2`, commit, and create the new annotated tag `v3.2`; never move an existing published tag.
+
+The canonical manual release procedure is: verify tests, commit the desired version and documentation, create the annotated `vMAJOR.MINOR` tag, build both platform archives **from that clean tagged commit**, and stage the two archives with a source-commit marker and `SHA256SUMS` on a separate `release-assets/vMAJOR.MINOR` branch. Pushing the annotated release tag starts the repository's release-publishing workflow, which validates the source commit and both archive SHA-256 values, then creates the GitHub Release with the two platform archives and checksum file. No release is published merely because another development commit was pushed. To reproduce identical development build numbers across platforms, set `SOURCE_DATE_EPOCH` to the same UTC Unix timestamp for both builds; official tagged builds already share the exact `major.minor` version.
 
 For source validation:
 

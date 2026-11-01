@@ -1,0 +1,78 @@
+name: Publish manually tagged FrankenASP release
+
+on:
+  push:
+    tags:
+      - "v3.*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Verify staged binaries and publish GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Checkout separately staged, platform-specific archives
+        uses: actions/checkout@v4
+        with:
+          ref: release-assets/${{ github.ref_name }}
+          path: release-assets
+          persist-credentials: false
+
+      - name: Verify tag, source commit, and archive checksums
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          test "$TAG" = "v$(cat VERSION)"
+          test "$(cat release-assets/COMMIT)" = "$GITHUB_SHA"
+          test "$(cat release-assets/TAG)" = "$TAG"
+          cd release-assets
+          sha256sum --check --strict SHA256SUMS
+          for platform in athena rook; do
+            test -s "frankenasp-v3-${platform}-arm32.tar.gz"
+            tar -tzf "frankenasp-v3-${platform}-arm32.tar.gz" | grep -Fx "frankenasp-${platform}/asp-installer"
+          done
+
+      - name: Publish GitHub Release with validated artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          cat > release-notes.txt <<EOF
+          FrankenASP V3 ${version}
+
+          Native ARM32 FrankenASP launcher, Bionic factory ASP helper and installer for:
+          - Echo Show 8 (2nd generation; athena)
+          - Echo Spot (1st generation; rook)
+
+          Each platform archive contains FrankenASP-owned code only. Amazon firmware,
+          factory libraries and calibration data are NOT included. Provide your own
+          compatible full OTA image or a verified local factory cache.
+
+          Installation and maintenance instructions:
+          https://github.com/${GH_REPO}/blob/${TAG}/docs/ASP-INSTALL.md
+
+          The optional host-side External ASP integration is maintained separately
+          in the dmit2k/techo5 fork and is not included in these archives.
+          EOF
+          gh release create "$TAG" \
+            "release-assets/frankenasp-v3-athena-arm32.tar.gz" \
+            "release-assets/frankenasp-v3-rook-arm32.tar.gz" \
+            "release-assets/SHA256SUMS" \
+            --verify-tag \
+            --title "FrankenASP ${version}" \
+            --notes-file release-notes.txt

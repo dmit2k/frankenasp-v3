@@ -34,6 +34,12 @@ Production ARM32 launcher and Bionic child are built separately using `platforms
 
 **Vendor library files, firmware, calibration data and private runtime images are not distributed with this repository.**
 
+## Install FrankenASP V3
+
+The [FrankenASP V3 installation guide](docs/ASP-INSTALL.md) explains the on-device **asp-installer** for both supported Echo models: selecting a full Amazon OTA, extracting and retaining verified factory files, choosing cached Fire OS builds, checking the deployed runtime, and installing, updating, rolling back or uninstalling the external ASP helper. The factory cache survives uninstall and can be reused without downloading or extracting the OTA again.
+
+The installer package contains only FrankenASP-owned binaries and configuration. **No proprietary Amazon firmware or binaries are distributed.** Installation requires root access, compatible TECHO5 External ASP integration, and an owner-provided OTA or valid local cache. See the [full command and option reference](docs/ASP-INSTALL.md) before changing an installed runtime.
+
 ## Built on TECHO5 — with genuine gratitude
 
 First and foremost, I want to recognize **[HuskerMinion](https://github.com/HuskerMinion) and the [TECHO5 contributors](https://github.com/HuskerMinion/techo5)**.

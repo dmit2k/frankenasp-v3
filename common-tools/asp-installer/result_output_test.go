@@ -27,7 +27,7 @@ func TestAllCommandHumanResultsAreNotJSON(t *testing.T) {
 		print    func(w *bytes.Buffer)
 		expected []string
 	}{
-		{"version", func(w *bytes.Buffer) { printVersion(w, "abcdef") }, []string{"revision: abcdef"}},
+		{"version", func(w *bytes.Buffer) { printVersion(w, "3.0.202533") }, []string{"version: 3.0.202533"}},
 		{"status", func(w *bytes.Buffer) { printStatus(w, map[string]any{"current": current, "cache_root": "/cache"}) }, []string{"Installed FrankenASP runtime"}},
 		{"inspect", func(w *bytes.Buffer) { printInspection(w, firmware) }, []string{"Fire OS 7574.1", "Amazon firmware build: PS75741-7080", "Cache directory:"}},
 		{"check", func(w *bytes.Buffer) {
@@ -83,5 +83,18 @@ func TestExplicitJSONOutputAndHumanDefault(t *testing.T) {
 	var parsed map[string]any
 	if err := json.Unmarshal(out.Bytes(), &parsed); err != nil || parsed["action"] != "inspect" {
 		t.Fatalf("unexpected JSON payload: %v %v", parsed, err)
+	}
+}
+
+func TestVersionBannerAlwaysHumanAndNotJSON(t *testing.T) {
+	for _, version := range []string{"3.0.202533", "3.0.dev"} {
+		var out bytes.Buffer
+		printRunBanner(&out, version)
+		if got := out.String(); got != "asp-installer v"+version+"\n" {
+			t.Fatalf("unexpected startup banner: %q", got)
+		}
+		if json.Valid(out.Bytes()) {
+			t.Fatal("banner unexpectedly parsed as JSON")
+		}
 	}
 }

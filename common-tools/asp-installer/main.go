@@ -14,11 +14,14 @@ import (
 	"time"
 )
 
-var revision = "development"
+// Build script assigns the immutable installer version (3.0.HHMMSS UTC).
+// An unpackaged source build advertises itself as development.
+var revision = "3.0.dev"
 
 func printJSON(v any) { b, _ := json.MarshalIndent(v, "", "  "); fmt.Println(string(b)) }
 func main() {
 	started := time.Now()
+	printRunBanner(os.Stderr, revision)
 	e := run()
 	if e != nil {
 		fmt.Fprintln(os.Stderr, "asp-installer:", e)

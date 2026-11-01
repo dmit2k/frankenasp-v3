@@ -20,8 +20,11 @@ func outputResult(w io.Writer, asJSON bool, result any, human func()) error {
 	return nil
 }
 
-func printVersion(w io.Writer, rev string) {
-	fmt.Fprintf(w, "FrankenASP V3 installer revision: %s\n", rev)
+func printRunBanner(w io.Writer, version string) {
+	fmt.Fprintf(w, "asp-installer v%s\n", version)
+}
+func printVersion(w io.Writer, version string) {
+	fmt.Fprintf(w, "asp-installer version: %s\n", version)
 }
 
 func printFactorySummary(w io.Writer, result map[string]any) {

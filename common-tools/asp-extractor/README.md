@@ -42,14 +42,18 @@ Override with `--cache-dir ABSOLUTE_PATH` on any command.
 
 The cache has the embedded installer's exact structure:
 `<platform>-<firmware>/manifest.json`, `SHA256SUMS`, `files/`,
-plus optional archived original OTA files in `ota-images/`. It supports
-multiple platform/firmware variants without replacing unrelated caches.
-Re-extraction of a cache matching the supplied OTA is
-skipped; all reused cache files are SHA-256 checked. Owner-selected backup
-directory paths are indexed separately in the desktop-only
-`asp-extractor-backups.json` next to the cache root, never inside a firmware
-cache; `list` displays the links and reports whether the source remains
-present. This index stores only local paths and references, not backup bytes.
+plus optional **tool-downloaded** OTA archives in `ota-images/`. A local OTA
+passed with `--ota` is read where it is and **never** copied to that directory.
+An original backup supplied with `--backup-dir` is read in place; no backup
+images or source-path index are saved. `list` reports extracted factory sets
+and any OTA archives actually retained. An old `asp-extractor-backups.json`,
+if present from an earlier test build, is ignored.
+
+A verified factory set is stored only once per platform/firmware/Fire OS and
+identical SHA-256 inventory, regardless of source format (OTA or backup).
+Re-extracting a different source with the same factory files prints the exact
+existing set and discards the duplicate. Differing factory contents are retained
+as numbered variants. Reusing an exact source hash can skip extraction entirely.
 
 ## Examples
 

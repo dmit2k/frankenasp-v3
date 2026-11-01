@@ -61,3 +61,51 @@ func TestPrivateFactoryClosure(t *testing.T) {
 		})
 	}
 }
+
+// This optional test uses owner-provided extracted factory files without
+// requiring proprietary artifacts in the public repository.
+func TestPrivateRealFactorySourceDedup(t *testing.T) {
+	for _, platform := range []string{"athena", "rook"} {
+		t.Run(platform, func(t *testing.T) {
+			path := os.Getenv("ASP_TEST_" + platform + "_CACHE")
+			if path == "" {
+				t.Skip("private V2 factory cache not specified")
+			}
+			actual, err := readCache(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := filepath.Join(t.TempDir(), "asp-installer-cache")
+			if err := requireCacheDir(base); err != nil {
+				t.Fatal(err)
+			}
+			ota := actual.Metadata
+			ota.SourceSHA256 = hashString("simulated OTA input for " + platform)
+			ota.URLSHA256 = ""
+			ota.OTAFormat = "ZIP_FULL_BLOCK_v4"
+			first, err := publishCache(base, ota, actual.Items, false, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			backup := ota
+			backup.SourceSHA256 = hashString("simulated backup input for " + platform)
+			backup.OTAFormat = "BACKUP_RAW_EXT4"
+			backup.DependencyEdges++
+			second, err := publishCache(base, backup, actual.Items, false, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !second.Hit || second.Path != first.Path {
+				t.Fatalf("duplicates across source formats: %s vs %s", first.Path, second.Path)
+			}
+			entries, err := os.ReadDir(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 || entries[0].Name() != filepath.Base(first.Path) {
+				t.Fatalf("unexpected factory cache layout: %+v", entries)
+			}
+			t.Logf("%s: deduplicated %d real factory files across OTA/backup identities", platform, len(actual.Items))
+		})
+	}
+}

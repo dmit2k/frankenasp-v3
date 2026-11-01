@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -131,7 +132,7 @@ func cacheMatchesName(folder string, meta cacheMetadata) bool {
 	return false
 }
 
-// Distinct source contents of the same firmware receive numbered
+// Genuinely different factory contents for the same firmware receive numbered
 // variants instead of opaque hash suffixes. Existing variants are never lost.
 func selectCacheDestination(base string, meta cacheMetadata) (string, bool, error) {
 	for variant := 1; variant <= 999; variant++ {
@@ -414,6 +415,54 @@ func findCache(base, platform, sourceHash, urlHash string) (cacheResult, error) 
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Metadata.Created > candidates[j].Metadata.Created })
 	return candidates[0], nil
 }
+
+// A backup and an OTA can contain identical factory files while the complete
+// source images have different SHA-256 hashes. Compare the validated artifact
+// inventories, not source identities, before allocating another directory.
+// The caller owns the cache lock while extracting so two writers cannot publish
+// identical factory content concurrently.
+func identicalFactoryCache(base string, meta cacheMetadata, wantedLines []string) (cacheResult, error) {
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return cacheResult{}, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), meta.Platform+"-") {
+			continue
+		}
+		candidate := filepath.Join(base, entry.Name())
+		raw, err := os.ReadFile(filepath.Join(candidate, "manifest.json"))
+		if err != nil {
+			return cacheResult{}, fmt.Errorf("existing cache %s: %w", entry.Name(), err)
+		}
+		var prior cacheMetadata
+		if err := json.Unmarshal(raw, &prior); err != nil {
+			return cacheResult{}, fmt.Errorf("invalid cache metadata %s: %w", entry.Name(), err)
+		}
+		if prior.Schema != cacheSchema {
+			continue
+		}
+		if prior.Platform != meta.Platform || prior.Firmware != meta.Firmware || fireOSForCache(prior) != fireOSForCache(meta) {
+			continue
+		}
+		existing, err := readCache(candidate)
+		if err != nil {
+			return cacheResult{}, fmt.Errorf("existing firmware cache %s invalid: %w", entry.Name(), err)
+		}
+		if len(existing.Items) != len(wantedLines) {
+			continue
+		}
+		existingLines, _, err := cacheKeyLines(existing.Items)
+		if err != nil {
+			return cacheResult{}, err
+		}
+		if slices.Equal(existingLines, wantedLines) {
+			return existing, nil
+		}
+	}
+	return cacheResult{}, os.ErrNotExist
+}
+
 func publishCache(base string, meta cacheMetadata, items map[string][]byte, refresh bool, m *progressMeter) (cacheResult, error) {
 	lines, total, e := cacheKeyLines(items)
 	if e != nil {
@@ -423,6 +472,16 @@ func publishCache(base string, meta cacheMetadata, items map[string][]byte, refr
 	meta.Bytes = total
 	meta.Schema = cacheSchema
 	meta.Created = time.Now().UTC().Format(time.RFC3339Nano)
+	identical, err := identicalFactoryCache(base, meta, lines)
+	if err == nil {
+		if m != nil {
+			m.Note("Extracted factory files are identical to " + filepath.Base(identical.Path) + "; duplicate discarded")
+		}
+		return identical, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return cacheResult{}, err
+	}
 	destination, exists, e := selectCacheDestination(base, meta)
 	if e != nil {
 		return cacheResult{}, e

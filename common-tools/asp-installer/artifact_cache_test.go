@@ -217,3 +217,56 @@ func TestFactoryCacheDirectoryNameDoesNotExposeSchemaVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestDifferentSourcesWithIdenticalFactoryFilesDeduplicate(t *testing.T) {
+	base, first := fixtureCache(t)
+	meta := first.Metadata
+	meta.SourceSHA256 = hashString("second source is a full backup rather than OTA")
+	meta.URLSHA256 = ""
+	meta.OTAFormat = "BACKUP_RAW_EXT4"
+	meta.DependencyEdges = 5
+	var out bytes.Buffer
+	meter := &progressMeter{out: &out, done: make(chan struct{})}
+	duplicate, err := publishCache(base, meta, first.Items, false, meter)
+	meter.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !duplicate.Hit || duplicate.Path != first.Path {
+		t.Fatalf("duplicated identical factory set: %+v", duplicate)
+	}
+	if !strings.Contains(out.String(), "Extracted factory files are identical to "+filepath.Base(first.Path)) {
+		t.Fatalf("no explicit duplicate message: %s", out.String())
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, e := range entries {
+		if e.IsDir() && e.Name() != "ota-images" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected one factory set, got %d", count)
+	}
+}
+
+func TestDifferentFactoryFilesRemainSeparateVariants(t *testing.T) {
+	base, first := fixtureCache(t)
+	meta := first.Metadata
+	meta.SourceSHA256 = hashString("different backup")
+	different := map[string][]byte{}
+	for name, contents := range first.Items {
+		different[name] = contents
+	}
+	different["vendor/lib/libasp.so"] = []byte("changed factory libasp")
+	variant, err := publishCache(base, meta, different, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if variant.Hit || variant.Path == first.Path || !strings.HasSuffix(variant.Path, "-variant-2") {
+		t.Fatalf("distinct factory set lost: %+v", variant)
+	}
+}

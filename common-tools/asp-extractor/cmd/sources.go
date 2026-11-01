@@ -78,7 +78,7 @@ func listLocal(o options) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("Cache root:", o.cacheDir)
+	fmt.Println("Extracted factory ASP sets:")
 	count := 0
 	for _, entry := range entries {
 		if !entry.IsDir() || entry.Name() == "ota-images" || strings.HasPrefix(entry.Name(), ".") {
@@ -101,26 +101,45 @@ func listLocal(o options) error {
 			continue
 		}
 		m := result.Metadata
-		fmt.Printf("CACHE %s: platform=%s firmware=%s fireos=%s files=%d bytes=%d schema=%s\n", entry.Name(), m.Platform, m.Firmware, fireOSForCache(m), m.Files, m.Bytes, m.Schema)
+		osLabel := ""
+		if fireos := fireOSForCache(m); fireos != "" {
+			osLabel = " (Fire OS " + fireos + ")"
+		}
+		fmt.Printf("  %s %s%s — %d files", m.Platform, m.Firmware, osLabel, m.Files)
+		if strings.Contains(entry.Name(), "-variant-") {
+			fmt.Printf(" [--firmware %s]", entry.Name())
+		}
+		fmt.Println()
 		count++
 	}
 	if count == 0 {
-		fmt.Println("No verified caches")
+		fmt.Println("  None")
 	}
 	otaDir := filepath.Join(o.cacheDir, "ota-images")
 	if sources, err := os.ReadDir(otaDir); err == nil {
+		printed := false
 		for _, s := range sources {
-			if s.Type().IsRegular() {
-				fmt.Printf("OTA %s\n", s.Name())
+			if !s.Type().IsRegular() || strings.HasPrefix(s.Name(), ".") {
+				continue
 			}
+			if !printed {
+				fmt.Println("Saved OTA downloads:")
+				printed = true
+			}
+			fmt.Printf("  %s\n", s.Name())
 		}
 	}
-	return printBackupLinks(o)
+	return nil
 }
 func extractSource(ctx context.Context, o options) error {
 	if err := ensureDesktopCache(o.cacheDir); err != nil {
 		return err
 	}
+	unlock, err := cacheLock(ctx, o.cacheDir)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	meter := newMeter()
 	defer meter.Close()
 	if o.backup != "" {
@@ -128,27 +147,34 @@ func extractSource(ctx context.Context, o options) error {
 		if err != nil {
 			return err
 		}
-		if err = recordBackupLink(o, result); err != nil {
-			return fmt.Errorf("backup cache created, but source index not saved: %w", err)
-		}
 		meter.Stop()
-		fmt.Printf("CACHE %s: firmware=%s fireos=%s files=%d\n", result.Path, result.Metadata.Firmware, fireOSForCache(result.Metadata), result.Metadata.Files)
+		printExtractionSummary(result)
 		return nil
 	}
 	searchDir, err := resolveOTASearchDir(o.cacheDir, "", "")
 	if err != nil {
 		return err
 	}
-	result, downloaded, cleanup, err := loadExtracted(ctx, o.cacheDir, o.platform, o.ota, o.otaURL, "", searchDir, "inspect", false, o.refresh, false, meter)
-	if cleanup != nil {
-		defer cleanup()
-	}
+	result, _, cleanup, err := loadExtracted(ctx, o.cacheDir, o.platform, o.ota, o.otaURL, "", searchDir, "inspect", false, o.refresh, false, meter)
 	if err != nil {
+		if cleanup != nil {
+			cleanup()
+		}
 		return err
 	}
+	// The extractor never requests --delete-downloaded-ota. A completed
+	// download belongs to the owner and must survive this command.
+
 	meter.Stop()
-	fmt.Printf("CACHE %s: firmware=%s fireos=%s files=%d source=%s\n", result.Path, result.Metadata.Firmware, fireOSForCache(result.Metadata), result.Metadata.Files, downloaded)
+	printExtractionSummary(result)
 	return nil
+}
+func printExtractionSummary(result cacheResult) {
+	status := "created"
+	if result.Hit {
+		status = "reused (no duplicate stored)"
+	}
+	fmt.Printf("Factory ASP %s %s: %d files, %s\n", result.Metadata.Platform, result.Metadata.Firmware, result.Metadata.Files, status)
 }
 func openBackupImages(dir, platform string) (*otaSources, []*os.File, error) {
 	names := []string{"system.img"}

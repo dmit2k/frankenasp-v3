@@ -40,9 +40,6 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		if e == nil {
 			m.Note("Verified extracted OTA cache reused; no download or partition scan necessary")
 			describeCache(m, cached)
-			if sourcePath != "" {
-				archiveLocalIfPossible(ctx, cached, sourcePath, m)
-			}
 			return cached, "", nil, nil
 		}
 		if !errors.Is(e, os.ErrNotExist) {
@@ -62,9 +59,8 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	}
 	if sourceURL != "" && !refresh {
 		m.Phase("Looking for already-downloaded OTA matching the extracted cache")
-		cached, localPath, err := cachedLocalOTAForURL(ctx, cacheDir, otaSearchDir, platform, sourceURL, m)
+		cached, _, err := cachedLocalOTAForURL(ctx, cacheDir, otaSearchDir, platform, sourceURL, m)
 		if err == nil {
-			archiveLocalIfPossible(ctx, cached, localPath, m)
 			return cached, "", nil, nil
 		}
 		if !errors.Is(err, os.ErrNotExist) {
@@ -129,6 +125,10 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 				if deleteOTA {
 					return found, source, cleanup, nil
 				}
+				if found.Metadata.SourceSHA256 != sourceHash {
+					m.Note("Downloaded OTA retained at " + source + "; identical factory files are already cached")
+					return found, source, cleanup, nil
+				}
 				archived, arerr := saveOTAArchive(ctx, found, source, true, m)
 				if arerr != nil {
 					return cacheResult{}, source, cleanup, arerr
@@ -186,10 +186,13 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 			existing, er := findCache(cacheDir, platform, sourceHash, "")
 			if er == nil {
 				if sourceURL == "" {
-					archiveLocalIfPossible(ctx, existing, source, m)
 					return existing, "", cleanup, nil
 				}
 				if deleteOTA {
+					return existing, source, cleanup, nil
+				}
+				if existing.Metadata.SourceSHA256 != sourceHash {
+					m.Note("Downloaded OTA retained at " + source + "; identical factory files are already cached")
 					return existing, source, cleanup, nil
 				}
 				archived, saveErr := saveOTAArchive(ctx, existing, source, true, m)
@@ -201,9 +204,15 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		}
 		return cacheResult{}, source, cleanup, e
 	}
-	m.Note("Cache created: " + saved.Path)
+	if !saved.Hit {
+		m.Note("Cache created: " + saved.Path)
+	}
 	if sourceURL != "" {
 		if deleteOTA {
+			return saved, source, cleanup, nil
+		}
+		if saved.Metadata.SourceSHA256 != sourceHash {
+			m.Note("Downloaded OTA retained at " + source + "; identical factory files are already cached")
 			return saved, source, cleanup, nil
 		}
 		archived, err := saveOTAArchive(ctx, saved, source, true, m)
@@ -212,18 +221,6 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		}
 		return saved, archived, cleanup, nil
 	}
-	archiveLocalIfPossible(ctx, saved, source, m)
 	return saved, "", cleanup, nil
 }
 func cacheDefaultPath() string { return filepath.Join(parentPath(), cacheDirName) }
-
-func archiveLocalIfPossible(ctx context.Context, result cacheResult, localPath string, m *progressMeter) {
-	if localPath == "" {
-		return
-	}
-	if _, err := saveOTAArchive(ctx, result, localPath, false, m); err != nil {
-		m.Note("WARNING: could not store a private copy of local OTA in cache (extracted files remain usable): " + err.Error())
-	} else if err = attachOriginalOTAName(result, localPath); err != nil {
-		m.Note("WARNING: OTA image saved, but source filename could not be indexed: " + err.Error())
-	}
-}

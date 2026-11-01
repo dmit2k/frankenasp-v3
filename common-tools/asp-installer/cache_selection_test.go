@@ -66,40 +66,47 @@ func TestFirmwareVariantsMustBeSelectedExplicitly(t *testing.T) {
 		t.Fatalf("variant not selected: %v", e)
 	}
 }
-func TestOTACacheCopiesLocalSourceAndStatusInventory(t *testing.T) {
+func TestLocalOTAIsNeverCopiedIntoCache(t *testing.T) {
 	base, found := fixtureCache(t)
 	source := filepath.Join(t.TempDir(), "update.bin")
 	if e := os.WriteFile(source, []byte("fake OTA contents"), 0600); e != nil {
 		t.Fatal(e)
 	}
-	dest, e := saveOTAArchive(context.Background(), found, source, false, nil)
+	if _, e := saveOTAArchive(context.Background(), found, source, false, nil); e == nil {
+		t.Fatal("accepted archiving user-supplied local OTA")
+	}
+	if raw, e := os.ReadFile(source); e != nil || string(raw) != "fake OTA contents" {
+		t.Fatal("original OTA changed")
+	}
+	if _, e := os.Stat(filepath.Join(base, "ota-images")); !errors.Is(e, os.ErrNotExist) {
+		t.Fatalf("local OTA created an archive directory: %v", e)
+	}
+	var output bytes.Buffer
+	meter := &progressMeter{out: &output, done: make(chan struct{})}
+	got, _, _, err := loadExtracted(context.Background(), base, "athena", source, "", "", t.TempDir(), "inspect", false, false, false, meter)
+	meter.Close()
+	if err != nil || got.Path != found.Path {
+		t.Fatalf("local OTA cache lookup: %v", err)
+	}
+	if _, e := os.Stat(filepath.Join(base, "ota-images")); !errors.Is(e, os.ErrNotExist) {
+		t.Fatalf("cached local OTA created an archive: %v", e)
+	}
+	if _, images := cacheInventory(context.Background(), base); len(images) != 0 {
+		t.Fatalf("unexpected retained OTA images: %+v", images)
+	}
+}
+
+func TestDownloadedOTACacheRefusesModification(t *testing.T) {
+	base, found := fixtureCache(t)
+	dir, e := ensureOTADir(base)
 	if e != nil {
 		t.Fatal(e)
 	}
-	if want := filepath.Join(base, "ota-images", "athena-fireos-7574.1-build-PS75741-7080.bin"); dest != want {
-		t.Fatalf("unexpected OTA cache path %s", dest)
-	}
-	if raw, e := os.ReadFile(source); e != nil || string(raw) != "fake OTA contents" {
-		t.Fatal("original OTA modified")
-	}
-	if _, e = archiveExisting(context.Background(), found); e != nil {
+	src := filepath.Join(dir, "asp-installer-ota-111111111111-update.bin")
+	if e := os.WriteFile(src, []byte("fake OTA contents"), 0600); e != nil {
 		t.Fatal(e)
 	}
-	extracted, images := cacheInventory(context.Background(), base)
-	if len(extracted) != 1 || extracted[0].State != "ready" || extracted[0].OTAImage != dest {
-		t.Fatalf("cache status incorrect: %+v", extracted)
-	}
-	if len(images) != 1 || images[0].State != "ready" || images[0].Path != dest {
-		t.Fatalf("OTA status incorrect: %+v", images)
-	}
-}
-func TestOTACacheRefusesModification(t *testing.T) {
-	base, found := fixtureCache(t)
-	source := filepath.Join(t.TempDir(), "update.bin")
-	if e := os.WriteFile(source, []byte("fake OTA contents"), 0600); e != nil {
-		t.Fatal(e)
-	}
-	dest, e := saveOTAArchive(context.Background(), found, source, false, nil)
+	dest, e := saveOTAArchive(context.Background(), found, src, true, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -107,14 +114,17 @@ func TestOTACacheRefusesModification(t *testing.T) {
 		t.Fatal(e)
 	}
 	if _, e = archiveExisting(context.Background(), found); e == nil {
-		t.Fatal("modified OTA accepted")
+		t.Fatal("modified download accepted")
 	}
 	_, images := cacheInventory(context.Background(), base)
 	if len(images) != 1 || images[0].State != "invalid" {
-		t.Fatalf("tampered OTA status: %+v", images)
+		t.Fatalf("tampered archive status: %+v", images)
 	}
-	_, e = saveOTAArchive(context.Background(), found, source, false, nil)
-	if e == nil {
+	src2 := filepath.Join(dir, "asp-installer-ota-222222222222-update.bin")
+	if e := os.WriteFile(src2, []byte("fake OTA contents"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = saveOTAArchive(context.Background(), found, src2, true, nil); e == nil {
 		t.Fatal("invalid cached OTA overwritten")
 	}
 }
@@ -157,11 +167,15 @@ func TestUnassociatedOTAVisible(t *testing.T) {
 
 func TestOriginalOTAFilenameIndexEnablesURLReuse(t *testing.T) {
 	base, found := fixtureCache(t)
-	source := filepath.Join(t.TempDir(), "update-kindle-rook_user_690918120.bin")
+	dir, e := ensureOTADir(base)
+	if e != nil {
+		t.Fatal(e)
+	}
+	source := filepath.Join(dir, "asp-installer-ota-123456abcdef-update-kindle-rook_user_690918120.bin")
 	if e := os.WriteFile(source, []byte("fake OTA contents"), 0600); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := saveOTAArchive(context.Background(), found, source, false, nil); e != nil {
+	if _, e := saveOTAArchive(context.Background(), found, source, true, nil); e != nil {
 		t.Fatal(e)
 	}
 	if e := attachOriginalOTAName(found, source); e != nil {

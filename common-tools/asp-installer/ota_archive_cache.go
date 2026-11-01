@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path"
@@ -65,9 +64,15 @@ func archiveExisting(ctx context.Context, result cacheResult) (string, error) {
 // saveOTAArchive publishes a complete OTA under the readable extraction-cache
 // identity. A downloaded temporary file can be renamed without a second copy.
 // User-supplied images are never removed or renamed.
+// Only program-downloaded OTA archives may be moved into ota-images.
+// A user-supplied local OTA must remain at its original path and is never
+// copied or moved into the private cache.
 func saveOTAArchive(ctx context.Context, result cacheResult, src string, downloaded bool, m *progressMeter) (string, error) {
+	if !downloaded {
+		return "", errors.New("local OTA images are not archived; only files downloaded by the installer/extractor may be saved")
+	}
 	if src == "" {
-		return "", errors.New("OTA source missing")
+		return "", errors.New("downloaded OTA source missing")
 	}
 	base := filepath.Dir(result.Path)
 	dir, e := ensureOTADir(base)
@@ -76,7 +81,7 @@ func saveOTAArchive(ctx context.Context, result cacheResult, src string, downloa
 	}
 	dest := archiveForExtraction(result)
 	if p, err := archiveExisting(ctx, result); err == nil {
-		if downloaded && filepath.Clean(src) != filepath.Clean(p) {
+		if filepath.Clean(src) != filepath.Clean(p) {
 			_ = os.Remove(src)
 		}
 		return p, nil
@@ -87,103 +92,14 @@ func saveOTAArchive(ctx context.Context, result cacheResult, src string, downloa
 		_, e = checkArchive(ctx, dest, result.Metadata.SourceSHA256)
 		return dest, e
 	}
-	// The complete source is reverified. No untrusted symlinks/hardlinks.
-	if downloaded {
-		if _, e = checkArchive(ctx, src, result.Metadata.SourceSHA256); e != nil {
-			return "", e
-		}
-	} else {
-		// User-owned local OTA may legitimately be 0644. The private cache
-		// copy itself remains 0600 and is verified after copying.
-		var h string
-		h, e = hashLocalCandidate(ctx, src)
-		if e != nil {
-			return "", e
-		}
-		if h != result.Metadata.SourceSHA256 {
-			return "", errors.New("local OTA SHA-256 does not match extraction cache")
-		}
+	if filepath.Clean(filepath.Dir(src)) != filepath.Clean(dir) {
+		return "", errors.New("download outside OTA archive directory")
 	}
-	if downloaded {
-		// Downloads are written in ota-images, so rename is atomic and same-FS.
-		if filepath.Dir(src) != dir {
-			return "", errors.New("download outside OTA archive directory")
-		}
-		e = unix.Renameat2(unix.AT_FDCWD, src, unix.AT_FDCWD, dest, unix.RENAME_NOREPLACE)
-		if e != nil {
-			return "", e
-		}
-	} else {
-		st, e := os.Stat(src)
-		if e != nil {
-			return "", e
-		}
-		free, e := diskAt(dir)
-		if e != nil {
-			return "", e
-		}
-		if e = requireSpace(diskNeed{Role: "OTA archive copy", Path: dir, OTA: roundAlloc(uint64(st.Size()), free.BlockSize), Reserve: spaceReserve}, m); e != nil {
-			return "", e
-		}
-		temp, e := os.CreateTemp(dir, ".ota-copy-")
-		if e != nil {
-			return "", e
-		}
-		temporary := temp.Name()
-		defer os.Remove(temporary)
-		if e = temp.Chmod(0600); e != nil {
-			temp.Close()
-			return "", e
-		}
-		input, e := os.Open(src)
-		if e != nil {
-			temp.Close()
-			return "", e
-		}
-		buffer := make([]byte, 1<<20)
-		for {
-			if e = ctx.Err(); e != nil {
-				break
-			}
-			n, readErr := input.Read(buffer)
-			if n > 0 {
-				var wrote int
-				wrote, e = temp.Write(buffer[:n])
-				if e != nil {
-					break
-				}
-				if wrote != n {
-					e = io.ErrShortWrite
-					break
-				}
-			}
-			if readErr == io.EOF {
-				break
-			}
-			if readErr != nil {
-				e = readErr
-				break
-			}
-		}
-		closeErr := input.Close()
-		if e == nil {
-			e = closeErr
-		}
-		if e == nil {
-			e = temp.Sync()
-		}
-		if cerr := temp.Close(); e == nil {
-			e = cerr
-		}
-		if e != nil {
-			return "", e
-		}
-		if _, e = checkArchive(ctx, temporary, result.Metadata.SourceSHA256); e != nil {
-			return "", e
-		}
-		if e = unix.Renameat2(unix.AT_FDCWD, temporary, unix.AT_FDCWD, dest, unix.RENAME_NOREPLACE); e != nil {
-			return "", e
-		}
+	if _, e = checkArchive(ctx, src, result.Metadata.SourceSHA256); e != nil {
+		return "", e
+	}
+	if e = unix.Renameat2(unix.AT_FDCWD, src, unix.AT_FDCWD, dest, unix.RENAME_NOREPLACE); e != nil {
+		return "", e
 	}
 	if e = fsyncDir(dir); e != nil {
 		return "", e
@@ -192,7 +108,7 @@ func saveOTAArchive(ctx context.Context, result cacheResult, src string, downloa
 		return "", e
 	}
 	if m != nil {
-		m.Note("OTA archived: " + dest)
+		m.Note("Downloaded OTA retained: " + dest)
 	}
 	return dest, nil
 }

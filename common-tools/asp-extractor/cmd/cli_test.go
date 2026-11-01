@@ -28,7 +28,11 @@ func sampleCache(t *testing.T, root, platform, firmware, source string) cacheRes
 func TestCacheAmbiguityAndTamper(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "asp-installer-cache")
 	a := sampleCache(t, root, "athena", "PS75741-7080", strings.Repeat("a", 64))
-	_ = sampleCache(t, root, "athena", "PS75741-7080", strings.Repeat("b", 64))
+	alt := a.Metadata
+	alt.SourceSHA256 = strings.Repeat("b", 64)
+	if _, err := publishCache(root, alt, map[string][]byte{"system/bin/linker": []byte("different linker data")}, false, nil); err != nil {
+		t.Fatal(err)
+	}
 	opts := options{cacheDir: root, platform: "athena"}
 	if _, err := selectDesktopCache(opts); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("expected ambiguity: %v", err)
@@ -170,33 +174,16 @@ func TestReleaseIsNotImportedFromForeignPlatform(t *testing.T) {
 
 var _ = bytes.Equal
 
-func TestBackupSourceIndex(t *testing.T) {
-	home := t.TempDir()
-	src := filepath.Join(home, "source")
-	if err := os.Mkdir(src, 0700); err != nil {
+func TestListIgnoresObsoleteBackupIndex(t *testing.T) {
+	root := t.TempDir()
+	o := options{cacheDir: filepath.Join(root, "asp-installer-cache")}
+	_ = sampleCache(t, o.cacheDir, "athena", "PS75741-7080", strings.Repeat("a", 64))
+	// Old index files must have no influence on list, including if malformed.
+	if err := os.WriteFile(filepath.Join(root, "asp-extractor-backups.json"), []byte("invalid index"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	o := options{platform: "rook", cacheDir: filepath.Join(home, "asp-installer-cache"), backup: src}
-	if err := ensureDesktopCache(o.cacheDir); err != nil {
-		t.Fatal(err)
-	}
-	sample := cacheResult{Metadata: cacheMetadata{Firmware: "690918120", SourceSHA256: strings.Repeat("b", 64)}, Path: filepath.Join(o.cacheDir, "rook-fireos-5.5.6.9-build-690918120")}
-	if err := recordBackupLink(o, sample); err != nil {
-		t.Fatal(err)
-	}
-	if err := recordBackupLink(o, sample); err != nil {
-		t.Fatal(err)
-	}
-	all, err := readBackupLinks(o.cacheDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(all) != 1 || all[0].Path != src || all[0].Firmware != sample.Metadata.Firmware {
-		t.Fatalf("index missing, duplicated, or wrong: %+v", all)
-	}
-	st, err := os.Stat(backupIndexPath(o.cacheDir))
-	if err != nil || st.Mode().Perm() != 0600 {
-		t.Fatalf("unsafe backup-index mode: %v %v", st, err)
+	if err := listLocal(o); err != nil {
+		t.Fatalf("list depends on obsolete backup index: %v", err)
 	}
 }
 

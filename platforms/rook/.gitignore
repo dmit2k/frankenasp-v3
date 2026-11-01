@@ -1,0 +1,10 @@
+/build/
+/out/
+/runtime/
+/tmp/
+*.elf.txt
+*.o
+*.so
+*.bin
+*.img
+*.raw

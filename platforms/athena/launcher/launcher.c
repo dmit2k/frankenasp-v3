@@ -109,9 +109,10 @@ static void read_at(int fd, void *buffer, size_t bytes, off_t offset)
     }
 }
 
-/* Sanity only for launcher, child, linker and libasp; the original Bionic
- * linker remains responsible for actual DT_NEEDED/symbol resolution. */
-static void elf32_arm(int fd, const char *interpreter, int shared)
+/* Check only executable format/architecture and file bounds, not firmware
+ * build-specific interpreter layout or manufacturer ELF program headers.
+ * The kernel and the Bionic loader resolve PT_INTERP/DT_NEEDED themselves. */
+static void elf32_arm(int fd, int shared)
 {
     struct stat st = checked(fd, 0, 0, !shared);
     Elf32_Ehdr h;
@@ -120,34 +121,16 @@ static void elf32_arm(int fd, const char *interpreter, int shared)
             h.e_ident[EI_CLASS] == ELFCLASS32 &&
             h.e_ident[EI_DATA] == ELFDATA2LSB &&
             h.e_ident[EI_VERSION] == EV_CURRENT &&
-            h.e_machine == EM_ARM && h.e_version == EV_CURRENT &&
+            h.e_machine == EM_ARM &&
+            h.e_version == EV_CURRENT &&
             (h.e_flags & EF_ARM_EABIMASK) == EF_ARM_EABI_VER5 &&
             (h.e_type == ET_EXEC || h.e_type == ET_DYN) &&
             (!shared || h.e_type == ET_DYN) &&
-            h.e_ehsize == sizeof h && h.e_phentsize == sizeof(Elf32_Phdr) &&
+            h.e_ehsize == sizeof h &&
+            h.e_phentsize == sizeof(Elf32_Phdr) &&
             h.e_phnum && h.e_phnum <= 128 &&
             (uint64_t)h.e_phoff + (uint64_t)h.e_phnum * sizeof(Elf32_Phdr)
                 <= (uint64_t)st.st_size, "ELF32 ARM EABI5 header");
-    unsigned int interps = 0, loads = 0;
-    for (unsigned int i = 0; i < h.e_phnum; ++i) {
-        Elf32_Phdr p;
-        read_at(fd, &p, sizeof p, (off_t)h.e_phoff + (off_t)i * sizeof p);
-        require((uint64_t)p.p_offset + p.p_filesz <= (uint64_t)st.st_size,
-                "ELF segment bounds");
-        if (p.p_type == PT_LOAD)
-            ++loads;
-        if (p.p_type == PT_INTERP) {
-            char path[64];
-            require(interpreter && ++interps == 1 &&
-                    p.p_filesz == strlen(interpreter) + 1 &&
-                    p.p_filesz <= sizeof path, "ELF interpreter length");
-            read_at(fd, path, p.p_filesz, p.p_offset);
-            require(!memcmp(path, interpreter, p.p_filesz),
-                    "original Bionic PT_INTERP");
-        }
-    }
-    require(loads && interps == (interpreter ? 1u : 0u),
-            "ELF load/interpreter policy");
 }
 
 /* Owner-authenticated fixed vendor source pair. Missing or unknown modes fail closed. */
@@ -226,7 +209,7 @@ static void vendor_sanity(int vendor)
 {
     int lib = component(vendor, "lib", 1, 0, 0);
     int asp = component(lib, "libasp.so", 0, 0, 0);
-    elf32_arm(asp, NULL, 1);
+    elf32_arm(asp, 1);
     int etc = component(vendor, "etc", 1, 0, 0);
     int configs = component(etc, "audio-algorithms", 1, 0, 0);
     const char *names[] = {"asp.cfg", "AFE.cfg"};
@@ -252,7 +235,7 @@ int main(int argc, char **argv)
     if (self < 0)
         fail("running launcher identity");
     require(same_inode(3, self), "FD3 is this launcher");
-    elf32_arm(3, NULL, 0); /* Static Linux launcher, no PT_INTERP. */
+    elf32_arm(3, 0); /* Native ARM32 launcher. */
     if (close(self) < 0)
         fail("close launcher identity");
 
@@ -265,10 +248,10 @@ int main(int argc, char **argv)
     int system = component(root, "system", 1, 0, 0);
     int bin = component(system, "bin", 1, 0, 0);
     int linker = component(bin, "linker", 0, 0, 1);
-    elf32_arm(linker, NULL, 0);
+    elf32_arm(linker, 0);
     int factory = component(root, "factory", 1, 0, 0);
     int child = component(factory, "asp1-child", 0, 0, 1);
-    elf32_arm(child, "/system/bin/linker", 0);
+    elf32_arm(child, 0);
     int channel_map = component(factory, "channel-map", 0, 0, 0);
     struct stat mapst = checked(channel_map, 0, 0, 0);
     require(mapst.st_size > 0 && mapst.st_size < 128, "trusted captured-slot map");

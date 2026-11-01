@@ -37,7 +37,7 @@ func selectFirmwareCache(base, platform, helperHash, requested string) (cacheRes
 		if meta.Platform != platform || meta.HelperSHA256 != helperHash {
 			continue
 		}
-		if requested != "" && requested != meta.Firmware && requested != name {
+		if requested != "" && requested != meta.Firmware && requested != fireOSForCache(meta) && requested != name {
 			continue
 		}
 		result, err := readCache(path)

@@ -15,7 +15,7 @@ func TestStatusHumanSummary(t *testing.T) {
 	}
 	var out bytes.Buffer
 	printStatus(&out, data)
-	for _, fragment := range []string{"State: installed", "Platform: rook", "Revision: abc123", "Vendor: bundled", "Saved generations: 1", "Backup archives: 1", "status-json"} {
+	for _, fragment := range []string{"Files: present (running/active state NOT checked)", "Installed target: Echo Spot (1st Gen, 2017) [rook]", "FrankenASP revision: abc123", "Vendor source: bundled", "Saved generations: 1", "Backup archives: 1", "status-json"} {
 		if !strings.Contains(out.String(), fragment) {
 			t.Errorf("missing %q in %s", fragment, out.String())
 		}
@@ -79,4 +79,21 @@ func TestSharedScanNumberAcrossPartitions(t *testing.T) {
 		t.Fatal("global scan numbering is not sequential")
 	}
 	meter.Close()
+}
+
+func TestStatusSeparatesLegacyInstalledRuntimeFromCachedFirmware(t *testing.T) {
+	data := map[string]any{
+		"current":          map[string]any{"installed": true, "path": "/data/techo5-linux/external-asp", "release_revision": "legacy-or-unrecorded", "vendor_mode": "bundled"},
+		"cache_root":       "/data/techo5-linux/asp-installer-cache",
+		"extracted_caches": []extractionStatus{{Platform: "rook", PlatformLabel: displayPlatform("rook"), Firmware: "690918120", FireOS: "5.5.6.9", State: "ready", FactoryFiles: 55, Path: "/data/techo5-linux/asp-installer-cache/rook-fireos-5.5.6.9-build-690918120"}},
+		"ota_images":       []imageStatus{},
+		"generations":      []map[string]any{}, "backup_archives": []string{}, "incomplete_operations": []string{},
+	}
+	var out bytes.Buffer
+	printStatus(&out, data)
+	for _, fragment := range []string{"Installed target: not recorded (manual/legacy deployment)", "FrankenASP revision: not recorded (manual/legacy deployment)", "Factory firmware cache (not necessarily installed on this device)", "Fire OS: 5.5.6.9", "Amazon firmware build: 690918120", "Device/target: Echo Spot (1st Gen, 2017) [rook]"} {
+		if !strings.Contains(out.String(), fragment) {
+			t.Fatalf("missing %q in %s", fragment, out.String())
+		}
+	}
 }

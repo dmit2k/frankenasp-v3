@@ -36,18 +36,29 @@ func statusData(cacheRoot string) map[string]any {
 }
 func printStatus(w io.Writer, v map[string]any) {
 	current := mapField(v["current"])
-	fmt.Fprintln(w, "FrankenASP V3 — installation status")
+	fmt.Fprintln(w, "FrankenASP V3 — status")
+	fmt.Fprintln(w, "Installed FrankenASP runtime:")
 	if err, ok := current["error"].(string); ok {
-		fmt.Fprintln(w, "State: INVALID / UNRECOGNIZED — "+err)
+		fmt.Fprintln(w, "  Files: INVALID / UNRECOGNIZED — "+err)
 	} else if !boolField(current, "installed") {
-		fmt.Fprintln(w, "State: not installed")
+		fmt.Fprintln(w, "  Files: not installed")
 	} else {
-		fmt.Fprintln(w, "State: installed (runtime files present; process activity not checked)")
+		fmt.Fprintln(w, "  Files: present (running/active state NOT checked)")
 		receipt := mapField(current["receipt"])
-		fmt.Fprintln(w, "Platform: "+stringField(receipt, "platform"))
-		fmt.Fprintln(w, "Revision: "+stringField(current, "release_revision"))
-		fmt.Fprintln(w, "Vendor: "+stringField(current, "vendor_mode"))
-		fmt.Fprintln(w, "Location: "+stringField(current, "path"))
+		platform := stringField(receipt, "platform")
+		if platform == "unknown" {
+			fmt.Fprintln(w, "  Installed target: not recorded (manual/legacy deployment)")
+		} else {
+			fmt.Fprintln(w, "  Installed target: "+displayPlatform(platform))
+		}
+		rev := stringField(current, "release_revision")
+		if rev == "legacy-or-unrecorded" {
+			fmt.Fprintln(w, "  FrankenASP revision: not recorded (manual/legacy deployment)")
+		} else {
+			fmt.Fprintln(w, "  FrankenASP revision: "+rev)
+		}
+		fmt.Fprintln(w, "  Vendor source: "+stringField(current, "vendor_mode"))
+		fmt.Fprintln(w, "  Directory: "+stringField(current, "path"))
 	}
 	generations, _ := v["generations"].([]map[string]any)
 	backups, _ := v["backup_archives"].([]string)
@@ -68,21 +79,37 @@ func printStatus(w io.Writer, v map[string]any) {
 	}
 	extracted, _ := v["extracted_caches"].([]extractionStatus)
 	images, _ := v["ota_images"].([]imageStatus)
-	fmt.Fprintf(w, "Cache root: %s\nExtracted caches: %d\n", textField(v, "cache_root"), len(extracted))
+	fmt.Fprintf(w, "Factory firmware cache (not necessarily installed on this device):\n  Root: %s\n  Cached extractions: %d\n", textField(v, "cache_root"), len(extracted))
 	for _, c := range extracted {
-		fmt.Fprintf(w, "  %s [%s, %d factory files]\n    %s\n", c.Firmware, c.State, c.FactoryFiles, c.Path)
-		if c.OTAImage != "" {
-			fmt.Fprintf(w, "    OTA: %s\n", c.OTAImage)
+		if c.State != "ready" {
+			fmt.Fprintf(w, "  Cache: %s (INVALID)\n    WARNING: %s\n", c.Path, c.Error)
+			continue
 		}
-		if c.Error != "" {
-			fmt.Fprintf(w, "    WARNING: %s\n", c.Error)
+		fmt.Fprintf(w, "  Device/target: %s\n", c.PlatformLabel)
+		if c.FireOS != "" {
+			fmt.Fprintf(w, "  Fire OS: %s\n", c.FireOS)
+		} else {
+			fmt.Fprintln(w, "  Fire OS: not recorded")
+		}
+		fmt.Fprintf(w, "  Amazon firmware build: %s\n  Extraction: %s (%d verified files)\n  Cache path: %s\n", c.Firmware, c.State, c.FactoryFiles, c.Path)
+		if c.OTAImage != "" {
+			fmt.Fprintf(w, "  Original OTA: %s\n", c.OTAImage)
 		}
 	}
-	fmt.Fprintf(w, "OTA images: %d\n", len(images))
+	fmt.Fprintf(w, "Saved original OTA images: %d\n", len(images))
 	for _, img := range images {
-		fmt.Fprintf(w, "  %s [%s, %d MiB]\n    %s\n", img.Firmware, img.State, mbCeil(uint64(img.SizeBytes)), img.Path)
+		if img.PlatformLabel != "" {
+			fmt.Fprintf(w, "  Target: %s\n", img.PlatformLabel)
+		}
+		if img.FireOS != "" {
+			fmt.Fprintf(w, "  Fire OS: %s\n", img.FireOS)
+		}
+		if img.Firmware != "" {
+			fmt.Fprintf(w, "  Amazon build: %s\n", img.Firmware)
+		}
+		fmt.Fprintf(w, "  OTA: %s (%s, %d MiB)\n", img.Path, img.State, mbCeil(uint64(img.SizeBytes)))
 		if img.Error != "" {
-			fmt.Fprintf(w, "    WARNING: %s\n", img.Error)
+			fmt.Fprintf(w, "  WARNING: %s\n", img.Error)
 		}
 	}
 	fmt.Fprintln(w, "More details: asp-installer status-json")

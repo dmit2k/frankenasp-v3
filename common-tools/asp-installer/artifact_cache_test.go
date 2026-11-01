@@ -171,7 +171,7 @@ func TestCacheLockHonorsCancellation(t *testing.T) {
 
 func TestReadableFirmwareCacheNamesAndNumberedVariants(t *testing.T) {
 	base, first := fixtureCache(t)
-	if actual := filepath.Base(first.Path); actual != "athena-PS75741-7080" {
+	if actual := filepath.Base(first.Path); actual != "athena-fireos-7574.1-build-PS75741-7080" {
 		t.Fatalf("unreadable cache directory: %q", actual)
 	}
 	alt := first.Metadata
@@ -181,7 +181,7 @@ func TestReadableFirmwareCacheNamesAndNumberedVariants(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if actual := filepath.Base(second.Path); actual != "athena-PS75741-7080-variant-2" {
+	if actual := filepath.Base(second.Path); actual != "athena-fireos-7574.1-build-PS75741-7080-variant-2" {
 		t.Fatalf("unexpected variant name: %q", actual)
 	}
 	if _, e := os.Stat(first.Path); e != nil {

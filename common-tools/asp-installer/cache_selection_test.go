@@ -12,13 +12,13 @@ import (
 
 func TestSelectFirmwareFromVerifiedCache(t *testing.T) {
 	base, found := fixtureCache(t)
-	for _, choice := range []string{"", "PS75741-7080", "athena-PS75741-7080"} {
+	for _, choice := range []string{"", "PS75741-7080", "7574.1", "athena-fireos-7574.1-build-PS75741-7080"} {
 		selected, e := selectFirmwareCache(base, "athena", found.Metadata.HelperSHA256, choice)
 		if e != nil || selected.Path != found.Path || !selected.Hit {
 			t.Fatalf("selection %q: %+v %v", choice, selected, e)
 		}
 	}
-	for _, choice := range []string{"PS75741-9999", "athena-PS75741-7080-variant-2"} {
+	for _, choice := range []string{"PS75741-9999", "athena-fireos-7574.1-build-PS75741-7080-variant-2"} {
 		_, e := selectFirmwareCache(base, "athena", found.Metadata.HelperSHA256, choice)
 		if e == nil {
 			t.Fatalf("missing firmware %q selected", choice)
@@ -80,7 +80,7 @@ func TestOTACacheCopiesLocalSourceAndStatusInventory(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if want := filepath.Join(base, "ota-images", "athena-PS75741-7080.bin"); dest != want {
+	if want := filepath.Join(base, "ota-images", "athena-fireos-7574.1-build-PS75741-7080.bin"); dest != want {
 		t.Fatalf("unexpected OTA cache path %s", dest)
 	}
 	if raw, e := os.ReadFile(source); e != nil || string(raw) != "fake OTA contents" {

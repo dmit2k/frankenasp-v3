@@ -198,22 +198,26 @@ func saveOTAArchive(ctx context.Context, result cacheResult, src string, downloa
 }
 
 type imageStatus struct {
-	Firmware  string `json:"firmware,omitempty"`
-	Platform  string `json:"platform,omitempty"`
-	Path      string `json:"path"`
-	SizeBytes int64  `json:"size_bytes,omitempty"`
-	SHA256    string `json:"sha256,omitempty"`
-	State     string `json:"state"`
-	Error     string `json:"error,omitempty"`
+	Firmware      string `json:"firmware,omitempty"`
+	FireOS        string `json:"fire_os_version,omitempty"`
+	PlatformLabel string `json:"platform_label,omitempty"`
+	Platform      string `json:"platform,omitempty"`
+	Path          string `json:"path"`
+	SizeBytes     int64  `json:"size_bytes,omitempty"`
+	SHA256        string `json:"sha256,omitempty"`
+	State         string `json:"state"`
+	Error         string `json:"error,omitempty"`
 }
 type extractionStatus struct {
-	Firmware     string `json:"firmware"`
-	Platform     string `json:"platform"`
-	Path         string `json:"path"`
-	FactoryFiles int    `json:"factory_files,omitempty"`
-	OTAImage     string `json:"ota_image,omitempty"`
-	State        string `json:"state"`
-	Error        string `json:"error,omitempty"`
+	Firmware      string `json:"firmware"`
+	FireOS        string `json:"fire_os_version,omitempty"`
+	PlatformLabel string `json:"platform_label,omitempty"`
+	Platform      string `json:"platform"`
+	Path          string `json:"path"`
+	FactoryFiles  int    `json:"factory_files,omitempty"`
+	OTAImage      string `json:"ota_image,omitempty"`
+	State         string `json:"state"`
+	Error         string `json:"error,omitempty"`
 }
 
 func cacheInventory(ctx context.Context, base string) ([]extractionStatus, []imageStatus) {
@@ -241,6 +245,8 @@ func cacheInventory(ctx context.Context, base string) ([]extractionStatus, []ima
 		}
 		state.State = "ready"
 		state.Firmware = found.Metadata.Firmware
+		state.FireOS = fireOSForCache(found.Metadata)
+		state.PlatformLabel = displayPlatform(found.Metadata.Platform)
 		state.Platform = found.Metadata.Platform
 		state.FactoryFiles = found.Metadata.Files
 		imagePath := archiveForExtraction(found)
@@ -248,9 +254,9 @@ func cacheInventory(ctx context.Context, base string) ([]extractionStatus, []ima
 		if _, err = archiveExisting(ctx, found); err == nil {
 			state.OTAImage = imagePath
 			imageStat, _ := os.Stat(imagePath)
-			images = append(images, imageStatus{Firmware: state.Firmware, Platform: state.Platform, Path: imagePath, SizeBytes: imageStat.Size(), SHA256: found.Metadata.SourceSHA256, State: "ready"})
+			images = append(images, imageStatus{Firmware: state.Firmware, FireOS: state.FireOS, PlatformLabel: state.PlatformLabel, Platform: state.Platform, Path: imagePath, SizeBytes: imageStat.Size(), SHA256: found.Metadata.SourceSHA256, State: "ready"})
 		} else if !os.IsNotExist(err) {
-			images = append(images, imageStatus{Firmware: state.Firmware, Platform: state.Platform, Path: imagePath, State: "invalid", Error: err.Error()})
+			images = append(images, imageStatus{Firmware: state.Firmware, FireOS: state.FireOS, PlatformLabel: state.PlatformLabel, Platform: state.Platform, Path: imagePath, State: "invalid", Error: err.Error()})
 		}
 		extra = append(extra, state)
 	}

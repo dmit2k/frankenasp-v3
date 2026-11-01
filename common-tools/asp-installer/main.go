@@ -234,6 +234,9 @@ func run() error {
 		return e
 	}
 	defer unlock()
+	if e = migrateCacheNames(*cachePath, meter); e != nil {
+		return e
+	}
 	extraction, downloadedOTA, cleanup, e := loadExtracted(ctx, *cachePath, *platform, *ota, *otaURL, *firmware, *tmp, cmd, child, *forceNoBackup, *refreshCache, *removeOTA, meter)
 	if cleanup != nil && *removeOTA {
 		defer cleanup()

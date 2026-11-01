@@ -167,7 +167,14 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		}
 	}
 	originalName = safeOTAName(originalName)
-	meta := cacheMetadata{Platform: platform, Firmware: src.firmware, SourceSHA256: sourceHash, HelperSHA256: helperHash, URLSHA256: urlHash, OriginalOTAName: originalName, OTAFormat: src.kind, DependencyEdges: collected.edgeCount}
+	version, versionErr := fireOSFromOTA(source)
+	if versionErr != nil {
+		return cacheResult{}, source, cleanup, fmt.Errorf("read Fire OS version from OTA: %w", versionErr)
+	}
+	if version == "" {
+		version = knownFireOS(platform, src.firmware)
+	}
+	meta := cacheMetadata{Platform: platform, Firmware: src.firmware, FireOS: version, SourceSHA256: sourceHash, HelperSHA256: helperHash, URLSHA256: urlHash, OriginalOTAName: originalName, OTAFormat: src.kind, DependencyEdges: collected.edgeCount}
 	m.Phase("Writing extracted artifact cache with SHA-256 inventory")
 	saved, e := publishCache(cacheDir, meta, collected.items, refresh, m)
 	if e != nil {

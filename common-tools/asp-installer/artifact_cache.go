@@ -29,6 +29,7 @@ type cacheMetadata struct {
 	Schema          string `json:"schema"`
 	Platform        string `json:"platform"`
 	Firmware        string `json:"firmware"`
+	FireOS          string `json:"fire_os_version,omitempty"`
 	SourceSHA256    string `json:"source_sha256"`
 	HelperSHA256    string `json:"helper_sha256"`
 	URLSHA256       string `json:"url_sha256,omitempty"`
@@ -111,20 +112,24 @@ func firmwareLabel(postBuild, incremental string) string {
 
 // Keep directory names human-readable; the full cryptographic identities live
 // only in manifest.json and SHA256SUMS.
-func cacheName(meta cacheMetadata) string {
-	return meta.Platform + "-" + meta.Firmware
-}
+func cacheName(meta cacheMetadata) string { return cacheFilename(meta) }
 func cacheMatchesName(folder string, meta cacheMetadata) bool {
-	base := cacheName(meta)
-	if folder == base {
-		return true
+	names := []string{cacheFilename(meta), meta.Platform + "-" + meta.Firmware}
+	for _, base := range names {
+		if folder == base {
+			return true
+		}
+		prefix := base + "-variant-"
+		if !strings.HasPrefix(folder, prefix) {
+			continue
+		}
+		numText := strings.TrimPrefix(folder, prefix)
+		num, err := strconv.Atoi(numText)
+		if err == nil && num >= 2 && num <= 999 && strconv.Itoa(num) == numText {
+			return true
+		}
 	}
-	prefix := base + "-variant-"
-	if !strings.HasPrefix(folder, prefix) {
-		return false
-	}
-	num, err := strconv.Atoi(strings.TrimPrefix(folder, prefix))
-	return err == nil && num >= 2 && num <= 999 && strconv.Itoa(num) == strings.TrimPrefix(folder, prefix)
+	return false
 }
 
 // Distinct contents or helper builds of the same firmware receive numbered
@@ -285,7 +290,7 @@ func readCache(path string) (cacheResult, error) {
 	if e = json.Unmarshal(data, &meta); e != nil {
 		return cacheResult{}, e
 	}
-	if meta.Schema != cacheSchema || (meta.Platform != "athena" && meta.Platform != "rook") || !firmwarePattern.MatchString(meta.Firmware) || !hexDigest.MatchString(meta.SourceSHA256) || !hexDigest.MatchString(meta.HelperSHA256) || (meta.URLSHA256 != "" && !hexDigest.MatchString(meta.URLSHA256)) || (meta.OriginalOTAName != "" && (meta.OriginalOTAName != safeOTAName(meta.OriginalOTAName) || strings.Contains(meta.OriginalOTAName, "/"))) || meta.Files < 1 || meta.Files > cacheFileLimit || meta.Bytes < 1 || meta.Bytes > cacheTotalLimit || meta.DependencyEdges < 0 || meta.DependencyEdges > 16384 {
+	if meta.Schema != cacheSchema || (meta.Platform != "athena" && meta.Platform != "rook") || !firmwarePattern.MatchString(meta.Firmware) || (meta.FireOS != "" && !fireOSPattern.MatchString(meta.FireOS)) || !hexDigest.MatchString(meta.SourceSHA256) || !hexDigest.MatchString(meta.HelperSHA256) || (meta.URLSHA256 != "" && !hexDigest.MatchString(meta.URLSHA256)) || (meta.OriginalOTAName != "" && (meta.OriginalOTAName != safeOTAName(meta.OriginalOTAName) || strings.Contains(meta.OriginalOTAName, "/"))) || meta.Files < 1 || meta.Files > cacheFileLimit || meta.Bytes < 1 || meta.Bytes > cacheTotalLimit || meta.DependencyEdges < 0 || meta.DependencyEdges > 16384 {
 		return cacheResult{}, errors.New("invalid cache manifest")
 	}
 	if !cacheMatchesName(filepath.Base(path), meta) {

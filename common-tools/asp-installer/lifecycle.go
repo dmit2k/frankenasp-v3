@@ -80,59 +80,21 @@ func backupArchives() []string {
 	return out
 }
 
-// On Android, /data can legitimately belong to the reserved system UID/GID
-// (1000:1000). Trust only that exact ancestor with non-world-writable
-// permissions; every other deployment ancestor must still be root-owned.
-// Never follow symbolic links, including on the Android /data mount point.
-func trustedDeploymentAncestor(cursor string, mode os.FileMode, uid, gid uint32) bool {
-	if !mode.IsDir() || mode&os.ModeSymlink != 0 {
-		return false
-	}
-	if uid == 0 {
-		return true
-	}
-	return cursor == "/data" && uid == 1000 && gid == 1000 && mode.Perm() == 0771 && mode&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) == 0
-}
-
-func checkParent() error {
-	p := parentPath()
-	for cursor := p; cursor != "/"; cursor = filepath.Dir(cursor) {
-		entry, e := os.Lstat(cursor)
-		if e != nil {
-			return e
-		}
-		ss, ok := entry.Sys().(*syscall.Stat_t)
-		if !ok || !trustedDeploymentAncestor(cursor, entry.Mode(), ss.Uid, ss.Gid) {
-			return fmt.Errorf("unsafe deployment ancestor %s", cursor)
-		}
-	}
-	st, e := os.Lstat(p)
-	if e != nil {
-		return e
-	}
-	if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
-		return errors.New("invalid installation parent")
-	}
-	s, ok := st.Sys().(*syscall.Stat_t)
-	if !ok || s.Uid != 0 {
-		return errors.New("installation parent not root-owned")
-	}
-	if st.Mode().Perm()&0022 != 0 && st.Mode().Perm() != 0777 {
-		return errors.New("unsafe writable installation parent")
-	}
-	return nil
-}
 func withLock(fn func() error) error {
 	if os.Geteuid() != 0 {
 		return errors.New("mutation requires root")
 	}
-	if e := checkParent(); e != nil {
-		return e
-	}
 	if incomplete := incompleteOperations(); len(incomplete) > 0 {
 		return fmt.Errorf("incomplete previous operation: %s; manual recovery required", strings.Join(incomplete, ", "))
 	}
-	name := filepath.Join(parentPath(), ".asp-installer-v3.lock")
+	return withInstallerLockAt(parentPath(), fn)
+}
+
+// The deployment parent is a location, not an installer-owned resource.
+// Do not inspect its owner or permission bits: TECHO5/Android owns this policy.
+// Only the lock file itself must belong to the invoking user (root on Echo).
+func withInstallerLockAt(parent string, fn func() error) error {
+	name := filepath.Join(parent, ".asp-installer-v3.lock")
 	fd, e := unix.Open(name, unix.O_RDWR|unix.O_CREAT|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
 	if e != nil {
 		return e
@@ -142,7 +104,7 @@ func withLock(fn func() error) error {
 	if e = unix.Fstat(fd, &st); e != nil {
 		return e
 	}
-	if st.Uid != 0 || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Mode&07777 != 0600 || st.Nlink != 1 {
+	if st.Uid != uint32(os.Geteuid()) || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Mode&07777 != 0600 || st.Nlink != 1 {
 		return errors.New("untrusted installer lock file")
 	}
 	if e = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); e != nil {

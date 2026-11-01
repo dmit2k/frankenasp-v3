@@ -160,7 +160,7 @@ Uninstall stops only recognized FrankenASP processes, checks for other runtime r
 
 ## Production layout and qualification
 
-The installer accepts the standard Android system-owned `/data` ancestor (`UID/GID 1000:1000`, mode `0771`) on devices such as Echo Spot; other non-root-owned ancestors remain prohibited, and symlinks remain prohibited. The deployment parent `/data/techo5-linux` itself must still be root-owned. The installer does not change the ownership or permissions of `/data` or the TECHO5 parent directory.
+The installer deliberately does **not** validate the owner, mode, or specific UID/GID of `/data`, `/data/techo5-linux`, or any other pre-existing parent directory: these paths are managed by Android/TECHO5 and may vary across devices and releases. It validates **only its own objects** (the `external-asp` runtime tree, its private cache and backups, its lock file, and its installer-managed staging/generation trees), including required ownership, file types, modes, and integrity. Parent-directory permissions are enforced by the operating system when accessing files; the installer does not change them.
 
 The destination remains `/data/techo5-linux/external-asp/{bin,etc,lib}`. The launcher expects an exact `ASP1-LAUNCHER-V1` profile; the helper is `lib/rootfs/factory/asp1-child`, and factory `/system/bin/linker` is extracted locally. All installer-owned directories are root-only 0700; executable files 0500; runtime data 0600. Genuine device calibration is exposed through validated /proc symlink aliases, not copied or recorded.
 

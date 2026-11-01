@@ -84,6 +84,17 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 			return cacheResult{}, "", nil, e
 		}
 	}
+	if sourceURL != "" && !refresh {
+		m.Phase("Looking for already-downloaded OTA matching the extracted cache")
+		cached, localPath, err := cachedLocalOTAForURL(ctx, cacheDir, tmpDir, platform, helperHash, sourceURL, m)
+		if err == nil {
+			m.Note("Previously downloaded OTA remains on disk: " + localPath)
+			return cached, "", nil, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return cacheResult{}, "", nil, err
+		}
+	}
 	if e := ctx.Err(); e != nil {
 		return cacheResult{}, "", nil, e
 	}

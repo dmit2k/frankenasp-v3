@@ -1,10 +1,10 @@
 # Echo Spot 1st generation (`rook`)
 
-This platform targets the original factory ASP from rook firmware build
-`304.6.9.0_user_690918120` (Fire OS 5.5.6.9). The DSP adapter is **not**
-compatible with arbitrary `libasp.so` builds. The 55-entry SHA-256 manifest
-pins its complete runtime and configuration closure; missing or mismatched
-owner-supplied resources fail closed before READY.
+This implementation uses an owner-provided ARM32 Bionic factory runtime.
+It does not pin OTA versions, manufacturer library checksums or exact DSP
+function addresses. The runtime must still contain a compatible internal DSP
+interface: changed private vtable layout or buffer ABI may require an adapter
+update. Incompatible runtime resources fail before READY where detectable.
 
 ## PCM / TECHO5 contract
 
@@ -15,7 +15,7 @@ owner-supplied resources fail closed before READY.
   timing require acoustic qualification on the target device.
 - Output: one A5 READY byte followed by 640 bytes of mono PCM16 per input
   block. The first 20-ms block includes an initial 64-sample FIFO pad.
-- Factory processing: 128-frame quanta, direct pinned `GenericAFE` path,
+- Factory processing: 128-frame quanta, direct internal `GenericAFE` path,
   stereo REF upsampling from 16 to 48 kHz, and factory mode-7 transport
   metadata stripped from the output PCM LSBs.
 - Calibration: the helper reads authenticated device-specific `miccal.0..3`
@@ -34,7 +34,7 @@ path did not receive an effective playback reference in offline experiments.
 
 ## Original runtime and build
 
-Prepare a **private**, matched Bionic API-22 runtime extracted from your own
+Prepare a **private**, internally compatible ARM32 Bionic runtime extracted from your own
 rook firmware or backup. Do not place factory libraries, firmware, calibration
 or private runtime material in Git. The helper uses original
 `/system/bin/linker`, `/system/lib/libasp.so` and its complete dependencies,
@@ -55,13 +55,13 @@ make sanitize
 The build links against original *user-supplied* Bionic API-22 objects; it
 never embeds proprietary files. The launcher requires the established FD3/FD4
 TECHO5 session entry, a root-owned private installation tree and a bundled,
-owner-verified system/vendor source pair. It does not use the device's older
+owner-selected system/vendor source pair. It does not use the device's older
 live vendor configuration. Build and native tests do not mount or modify a
 running device.
 
 ## Acceptance limitations
 
-The original factory DSP has run in a full-system offline VM with matched
+The original factory DSP has run in a full-system offline VM with compatible
 runtime assets and synthetic PCM. This is not evidence of real-time behavior,
 valid physical MIC/REF mapping, calibration accuracy, false wake prevention,
 or voice quality on a real Spot. Native Linux 4.9 mount namespace, chroot,

@@ -1,8 +1,7 @@
-/* Pinned factory ASR adapter for rook build 690918120, ARM32 Bionic API 22. */
+/* Factory ASR adapter for rook, ARM32 Bionic.
+ * Internal API layout is validated at runtime; no OTA build/file hashes. */
 #include "vendor.h"
 #include "front.h"
-#include "core.h"
-#include "runtime_manifest.h"
 #ifndef ROOK_TEST_ONLY
 extern void *dlopen(const char *, int);
 extern void *dlsym(void *, const char *);
@@ -48,10 +47,6 @@ int rook_factory_open(void) {
     return -1; /* No vendor simulation can be used in a production binary. */
 #else
     if (active) return -1;
-    u8 actual[32];
-    for (usize i = 0; i < RUNTIME_COUNT; ++i)
-        if (file_sha256(runtime_manifest[i].path, actual) ||
-            memcmp(actual, runtime_manifest[i].sha, 32)) return -1;
     void *library = dlopen("/system/lib/libasp.so", 2);
     if (!library) return -1;
     int (*init)(void *) = dlsym(library, "asp_parameterized_init");
@@ -69,9 +64,13 @@ int rook_factory_open(void) {
     afe = *(void **)((u8 *)pipeline + 4);
     if (!afe) return -1;
     process = (void *)(*(u32 **)afe)[8];
-    struct DlInfo owner;
-    if (!dladdr((void *)create, &owner) ||
-        ((uptr)process & ~(uptr)1) != (uptr)owner.base + 0x3bda0U) return -1;
+    /* Require the selected implementation to belong to the same loaded
+     * factory DSO as the exported create function, without an OTA-specific
+     * code address. Thumb bit 0 is not part of the function address. */
+    struct DlInfo api_owner, method_owner;
+    if (!process || !dladdr((void *)create, &api_owner) ||
+        !dladdr((void *)((uptr)process & ~(uptr)1), &method_owner) ||
+        !api_owner.base || method_owner.base != api_owner.base) return -1;
     mic_buffer = *(struct Buffer32 *)((u8 *)pipeline + 0x60);
     ref_buffer = *(struct Buffer32 *)((u8 *)pipeline + 0xc0);
     out_buffer = *(struct Buffer32 *)((u8 *)pipeline + 0xe0);

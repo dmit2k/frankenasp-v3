@@ -14,7 +14,7 @@ flags=(-B "$BINUTILS_DIR/" -std=c11 -O2 -Wall -Wextra -Werror
  -ffile-prefix-map="$ROOT"=. -ffile-prefix-map="$ATHENA"=.
  -I"$ROOT/src" -I"$ATHENA/src" -DASP_BIONIC)
 objects=()
-for name in src/sha256.c src/front.c src/vendor.c src/child.c \
+for name in src/front.c src/vendor.c src/child.c \
  "$ATHENA/src/descriptor.c" "$ATHENA/src/io.c" "$ATHENA/src/bionic_entry.c"; do
  key=$(basename "${name%.c}")
  source="$name"; [[ "$source" = /* ]] || source="$ROOT/$name"

@@ -7,6 +7,7 @@ child=(ROOT/'src/child.c').read_text()
 vendor=(ROOT/'src/vendor_factory.c').read_text()
 assert 'same_inode(3, self)' in launcher and 'checked(DEPLOY_FD, 1, 1, 0)' in launcher
 assert 'O_NOFOLLOW' in launcher and 'openat(parent, name, flags)' in launcher
+assert 'p.p_type == PT_INTERP' not in launcher
 assert 'CLONE_NEWNS' in launcher and 'MS_REC | MS_PRIVATE' in launcher
 assert 'MS_BIND | MS_REMOUNT | RO_FLAGS' in launcher
 assert 'execveat(child, "", child_argv, child_env, AT_EMPTY_PATH)' in launcher

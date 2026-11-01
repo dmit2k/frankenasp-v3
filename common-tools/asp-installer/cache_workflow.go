@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 )
 
-func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceURL, firmware, tmpDir, cmd string, child []byte, noBackup, refresh, deleteOTA bool, m *progressMeter) (cacheResult, string, func(), error) {
+func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceURL, firmware, otaSearchDir, cmd string, child []byte, noBackup, refresh, deleteOTA bool, m *progressMeter) (cacheResult, string, func(), error) {
 	if sourcePath == "" && sourceURL == "" {
 		result, e := selectFirmwareCache(cacheDir, platform, hashText(child), firmware)
 		if e != nil {
@@ -63,7 +63,7 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	}
 	if sourceURL != "" && !refresh {
 		m.Phase("Looking for already-downloaded OTA matching the extracted cache")
-		cached, localPath, err := cachedLocalOTAForURL(ctx, cacheDir, tmpDir, platform, helperHash, sourceURL, m)
+		cached, localPath, err := cachedLocalOTAForURL(ctx, cacheDir, otaSearchDir, platform, helperHash, sourceURL, m)
 		if err == nil {
 			archiveLocalIfPossible(ctx, cached, localPath, m)
 			return cached, "", nil, nil
@@ -75,7 +75,9 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	if e := ctx.Err(); e != nil {
 		return cacheResult{}, "", nil, e
 	}
-	downloadDir := tmpDir
+	// The download always belongs to the private OTA archive cache, never the
+	// optional read-only search path or a TECHO5-managed parent directory.
+	downloadDir := otaArchiveDir(cacheDir)
 	if sourceURL != "" {
 		var err error
 		downloadDir, err = ensureOTADir(cacheDir)

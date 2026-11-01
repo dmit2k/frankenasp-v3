@@ -82,7 +82,7 @@ func hashLocalCandidate(ctx context.Context, filename string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func cachedLocalOTAForURL(ctx context.Context, cacheDir, tmpDir, platform, helperHash, rawURL string, m *progressMeter) (cacheResult, string, error) {
+func cachedLocalOTAForURL(ctx context.Context, cacheDir, otaSearchDir, platform, helperHash, rawURL string, m *progressMeter) (cacheResult, string, error) {
 	u, e := url.Parse(rawURL)
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return cacheResult{}, "", errors.New("OTA URL must be HTTP(S)")
@@ -92,7 +92,7 @@ func cachedLocalOTAForURL(ctx context.Context, cacheDir, tmpDir, platform, helpe
 	if expected == "firmware.bin" {
 		return cacheResult{}, "", os.ErrNotExist
 	}
-	entries, e := os.ReadDir(tmpDir)
+	entries, e := os.ReadDir(otaSearchDir)
 	if e != nil {
 		return cacheResult{}, "", e
 	}
@@ -107,7 +107,7 @@ func cachedLocalOTAForURL(ctx context.Context, cacheDir, tmpDir, platform, helpe
 		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
 			continue
 		}
-		filename := filepath.Join(tmpDir, entry.Name())
+		filename := filepath.Join(otaSearchDir, entry.Name())
 		checked++
 		if checked > 64 {
 			break

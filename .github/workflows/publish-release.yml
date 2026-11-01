@@ -39,8 +39,8 @@ jobs:
           cd release-assets
           sha256sum --check --strict SHA256SUMS
           for platform in athena rook; do
-            test -s "frankenasp-v3-${platform}-arm32.tar.gz"
-            tar -tzf "frankenasp-v3-${platform}-arm32.tar.gz" | grep -Fx "frankenasp-${platform}/asp-installer"
+            test -s "frankenasp-${TAG}-${platform}-arm32.tar.gz"
+            tar -tzf "frankenasp-${TAG}-${platform}-arm32.tar.gz" | grep -Fx "frankenasp-${platform}/asp-installer"
           done
 
       - name: Publish GitHub Release with validated artifacts
@@ -70,8 +70,8 @@ jobs:
           in the dmit2k/techo5 fork and is not included in these archives.
           EOF
           gh release create "$TAG" \
-            "release-assets/frankenasp-v3-athena-arm32.tar.gz" \
-            "release-assets/frankenasp-v3-rook-arm32.tar.gz" \
+            "release-assets/frankenasp-${TAG}-athena-arm32.tar.gz" \
+            "release-assets/frankenasp-${TAG}-rook-arm32.tar.gz" \
             "release-assets/SHA256SUMS" \
             --verify-tag \
             --title "FrankenASP ${version}" \

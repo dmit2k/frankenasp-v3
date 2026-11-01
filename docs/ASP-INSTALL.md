@@ -9,7 +9,7 @@ The FrankenASP release package contains the installer, its Linux launcher, the B
 ## Requirements and package layout
 
 - A supported Echo running TECHO5 with root shell access and the compatible External ASP host integration.
-- The matching `frankenasp-v3-athena-arm32.tar.gz` or `frankenasp-v3-rook-arm32.tar.gz` package, built for the target platform.
+- The matching `frankenasp-v3.1-athena-arm32.tar.gz` or `frankenasp-v3.1-rook-arm32.tar.gz` package, built for the target platform.
 - A compatible **full** Amazon OTA ZIP, unless the required extracted firmware cache already exists.
 - Sufficient free storage for a new OTA download, extracted cache, and any requested runtime backup.
 
@@ -77,7 +77,7 @@ cd /data/techo5-linux/asp-installer-v3
 
 **Output format:** all commands print readable text by default. Use `--json` on the command to request a structured JSON result. The aliases `status-json`, `check-json`, `check-vendor-json`, and the corresponding `*-json` forms are also accepted. Progress messages, startup version and total elapsed time are printed to **stderr**; JSON results go to **stdout** only.
 
-Every invocation identifies the **running installer version**. Official releases use the tagged major/minor version (for example, `asp-installer v3.1`). Builds from later, untagged commits use the same major/minor base plus a UTC build timestamp (`3.1.YYMMDDHHMMSS`). This is separate from the Amazon firmware build number and from the revision of the installed FrankenASP runtime. The `version` command and `version --json` report the same installer version.
+Each command prints the running installer's version in its startup banner (for example, `asp-installer v3.1`); `version` and `version --json` report it explicitly. The installed FrankenASP runtime revision and Amazon firmware build are separate values.
 
 ## Options
 
@@ -90,7 +90,8 @@ Every invocation identifies the **running installer version**. Official releases
 | `--assets DIR` | Override the packaged asset directory (default `./assets`). |
 | `--platform athena\|rook` | Optional explicit platform check; must match the packaged release manifest. |
 | `--vendor-mode auto\|live\|bundled` | `auto` (default) selects live `/vendor` on Athena only when verified and read-only, otherwise a bundled private copy. Rook always uses `bundled`. |
-| `--tmp-dir DIR` | Location for temporary OTA files and lookup of previously saved local OTA candidates (default `/data/techo5-linux`). |
+| `--ota-search-dir DIR` | Optional directory to search for previously saved local OTA candidates (default: `<cache-dir>/ota-images`). This option does **not** control download or temporary file placement. |
+| `--tmp-dir DIR` | Deprecated alias of `--ota-search-dir`, retained for compatibility. |
 | `--refresh-cache` | Force a fresh download/extraction instead of cached reuse; requires an explicit `--ota` or `--ota-url`. |
 | `--delete-downloaded-ota` | With `--ota-url`, delete the newly downloaded OTA after the command rather than retaining it. Does not delete previously saved/local OTA images. |
 | `--force-no-backup` | `update` only: skip the archive backup; the previous runtime generation is still retained. |
@@ -122,6 +123,8 @@ The persistent cache is independent of the installed runtime. Typical names are:
 ```
 
 These names are examples, not bundled files. A distinct OTA or helper with the same build label gets a `-variant-N` cache directory. Cache reuse verifies the source/helper identity and every extracted file against SHA-256 records; cached `ready` means **verified files**, not that FrankenASP is active. `status` shows full paths, Fire OS version, Amazon build, file counts, and OTA integrity status. An original OTA file is **not required** once a compatible extraction is cached.
+
+Incomplete OTA downloads are created as private temporary files inside `<cache-dir>/ota-images/` and removed after failed transfers; completed downloaded images are retained there under private, readable names. No temporary OTA files are created directly in `/data/techo5-linux/` by default. The OTA-search option only controls where previously saved local candidates are looked up.
 
 OTA downloads are retained in `ota-images/` by default. A local OTA can be copied to that private archive when sufficient disk space exists; if not, the verified extraction remains usable and the installer reports a warning. `uninstall` does **not** remove `asp-installer-cache/` or any OTA images. The optional `--purge-backups` removes **backups**, not the factory cache.
 
@@ -169,13 +172,7 @@ GO=/path/to/go1.26.9/bin/go ./build-release.sh \
   /path/to/rook-output
 ```
 
-The script produces the matching `frankenasp-v3-<platform>-arm32.tar.gz` archive without proprietary Amazon files. Release versions are resolved automatically as described below. Platform launcher and Bionic helper sources and build scripts are under `platforms/athena/` and `platforms/rook/`.
-
-## Release versions and maintainer publication
-
-The repository root `VERSION` defines the current **major.minor** release baseline (for example, `3.1`). **Official releases are created manually**, using an annotated Git tag matching that baseline (`v3.1`). Building a clean checkout of the exact tagged commit produces the short version `3.1`. Building subsequent untagged commits, or a modified working tree, produces `3.1.YYMMDDHHMMSS` with the UTC build timestamp. These builds sort above `3.1` but below the next minor release (`3.2`). To publish the next release, increment `VERSION`, commit, and create the corresponding annotated tag. Published release tags must never be moved.
-
-The canonical manual release procedure is: verify tests, commit the desired version and documentation, create the annotated `vMAJOR.MINOR` tag, build both platform archives **from that clean tagged commit**, and stage the two archives with a source-commit marker and `SHA256SUMS` on a separate `release-assets/vMAJOR.MINOR` branch. Pushing the annotated release tag starts the repository's release-publishing workflow, which validates the source commit and both archive SHA-256 values, then creates the GitHub Release with the two platform archives and checksum file. No release is published merely because another development commit was pushed. To reproduce identical development build numbers across platforms, set `SOURCE_DATE_EPOCH` to the same UTC Unix timestamp for both builds; official tagged builds already share the exact `major.minor` version.
+The script produces the matching `frankenasp-v<version>-<platform>-arm32.tar.gz` archive without proprietary Amazon files. Release versions are resolved automatically. Platform launcher and Bionic helper sources and build scripts are under `platforms/athena/` and `platforms/rook/`.
 
 For source validation:
 

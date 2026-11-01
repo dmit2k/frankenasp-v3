@@ -85,7 +85,8 @@ func run() error {
 	otaURL := f.String("ota-url", "", "owner-selected OTA HTTP(S) URL")
 	firmware := f.String("firmware", "", "select already-extracted cached firmware version or variant by name; omit OTA for cached use")
 	assets := f.String("assets", "./assets", "directory with release launcher/helper/config assets")
-	tmp := f.String("tmp-dir", "/data/techo5-linux", "temporary OTA download directory")
+	otaSearchDir := f.String("ota-search-dir", "", "optional directory to search for previously saved local OTA candidates (default: <cache-dir>/ota-images)")
+	legacyTmpDir := f.String("tmp-dir", "", "deprecated alias for --ota-search-dir; NOT used for OTA downloads")
 	cachePath := f.String("cache-dir", cacheDefaultPath(), "persistent SHA-256 verified extracted OTA cache directory")
 	refreshCache := f.Bool("refresh-cache", false, "redownload and re-extract selected OTA, atomically replacing an existing cache")
 	vendorMode := f.String("vendor-mode", "auto", "auto|bundled|live; Rook always bundled")
@@ -110,6 +111,10 @@ func run() error {
 	}
 	if *cachePath == "/" {
 		return errors.New("unsafe cache directory")
+	}
+	searchDirectory, e := resolveOTASearchDir(*cachePath, *otaSearchDir, *legacyTmpDir)
+	if e != nil {
+		return e
 	}
 
 	mutating := cmd == "install" || cmd == "update" || cmd == "uninstall" || cmd == "rollback"
@@ -241,7 +246,7 @@ func run() error {
 	if e = migrateCacheNames(*cachePath, meter); e != nil {
 		return e
 	}
-	extraction, downloadedOTA, cleanup, e := loadExtracted(ctx, *cachePath, *platform, *ota, *otaURL, *firmware, *tmp, cmd, child, *forceNoBackup, *refreshCache, *removeOTA, meter)
+	extraction, downloadedOTA, cleanup, e := loadExtracted(ctx, *cachePath, *platform, *ota, *otaURL, *firmware, searchDirectory, cmd, child, *forceNoBackup, *refreshCache, *removeOTA, meter)
 	if cleanup != nil && *removeOTA {
 		defer cleanup()
 	}

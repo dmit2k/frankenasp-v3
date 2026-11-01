@@ -22,8 +22,10 @@ owner-supplied resources fail closed before READY.
   through `/proc/idme/`, applies the validated Q30 gains to captured
   microphones exactly once, and never stores or logs those values. Missing
   calibration prevents startup.
-- Fully zero native input blocks produce zero listener PCM to prevent
-  publishing delayed pre-mute factory output; the DSP still advances.
+
+The helper has no mute detection, PCM-output censorship or privacy policy.
+TECHO5 applies SoftwareCut at the capture boundary. Already-captured PCM,
+including DSP-delayed frames, remains valid output after a mute transition.
 
 The existing TECHO5 native capture and ASP1 wire protocol are used unchanged.
 No platform-specific changes to TECHO5 are required for the qualified capture

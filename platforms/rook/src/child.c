@@ -83,10 +83,6 @@ int main(int argc, char **argv) {
         int got = asp_read_exact(0, input, BLOCK_BYTES);
         if (got == 0) { rc = 0; break; }
         if (got < 0) { diagnostic("rook: truncated PCM\n"); break; }
-        /* A full native zero block is the privacy software-cut representation.
-         * Advance factory state but never publish a delayed pre-mute sample. */
-        unsigned silent = 1;
-        for (unsigned i = 0; i < BLOCK_BYTES; ++i) silent &= input[i] == 0;
         for (unsigned frame = 0; frame < BLOCK_FRAMES; ++frame) {
             memcpy(quantum + pending * 18, input + frame * 18, 18);
             if (++pending == ROOK_QUANTUM) {
@@ -107,7 +103,6 @@ int main(int argc, char **argv) {
             packet[2*i] = (u8)value;
             packet[2*i+1] = (u8)(value >> 8);
         }
-        if (silent) memset(packet, 0, sizeof(packet));
         if (asp_write_exact(wire, packet, OUTPUT_BYTES)) goto done;
         available -= BLOCK_FRAMES;
         memmove(output_fifo, output_fifo + BLOCK_FRAMES, available * sizeof(i16));

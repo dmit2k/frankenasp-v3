@@ -227,7 +227,7 @@ static void factory_sanity(int vendor, int system)
 {
     int lib = component(system, "lib", 1, 0, 0);
     int asp = component(lib, "libasp.so", 0, 0, 0);
-    elf32_arm(asp, NULL, 1);
+    elf32_arm(asp, "/system/bin/linker", 1);
     int etc = component(vendor, "etc", 1, 0, 0);
     int configs = component(etc, "audio-algorithms", 1, 0, 0);
     const char *names[] = {"AFE.cfg", "coefs_FBF.cfg"};
@@ -267,7 +267,7 @@ int main(int argc, char **argv)
     int system = component(root, "system", 1, 0, 0);
     int bin = component(system, "bin", 1, 0, 0);
     int linker = component(bin, "linker", 0, 0, 1);
-    elf32_arm(linker, NULL, 0);
+    elf32_arm(linker, "/system/bin/linker", 0);
     int factory = component(root, "factory", 1, 0, 0);
     int child = component(factory, "asp1-child", 0, 0, 1);
     elf32_arm(child, "/system/bin/linker", 0);

@@ -41,21 +41,26 @@ func elapsedText(duration time.Duration) string {
 }
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: asp-installer <inspect|check|check-json|check-vendor|check-vendor-json|install|update|uninstall|rollback|status|status-json|version> [flags]")
+		return errors.New("usage: asp-installer <inspect|check|check-vendor|install|update|uninstall|rollback|status|version> [flags] [--json]; *-json aliases remain available")
 	}
 	selected := os.Args[1]
-	jsonOutput := selected == "status-json" || selected == "check-vendor-json" || selected == "check-json"
-	cmd := selected
-	if jsonOutput {
-		cmd = strings.TrimSuffix(selected, "-json")
-	}
+	jsonOutput := strings.HasSuffix(selected, "-json")
+	cmd := strings.TrimSuffix(selected, "-json")
 	if cmd == "version" {
-		printJSON(map[string]string{"version": revision})
-		return nil
+		vf := flag.NewFlagSet("version", flag.ContinueOnError)
+		jsonFlag := vf.Bool("json", false, "emit machine-readable JSON instead of human output")
+		if e := vf.Parse(os.Args[2:]); e != nil {
+			return e
+		}
+		if vf.NArg() != 0 {
+			return errors.New("version accepts no positional arguments")
+		}
+		return outputResult(os.Stdout, jsonOutput || *jsonFlag, map[string]string{"version": revision}, func() { printVersion(os.Stdout, revision) })
 	}
 	if cmd == "status" {
 		sf := flag.NewFlagSet("status", flag.ContinueOnError)
 		cacheRoot := sf.String("cache-dir", cacheDefaultPath(), "private OTA and extracted cache root")
+		jsonFlag := sf.Bool("json", false, "emit machine-readable JSON instead of human output")
 		if e := sf.Parse(os.Args[2:]); e != nil {
 			return e
 		}
@@ -63,12 +68,7 @@ func run() error {
 			return errors.New("status accepts only --cache-dir ABSOLUTE_PATH")
 		}
 		result := statusData(*cacheRoot)
-		if jsonOutput {
-			printJSON(result)
-		} else {
-			printStatus(os.Stdout, result)
-		}
-		return nil
+		return outputResult(os.Stdout, jsonOutput || *jsonFlag, result, func() { printStatus(os.Stdout, result) })
 	}
 	switch cmd {
 	case "inspect", "check", "check-vendor", "install", "update", "uninstall", "rollback":
@@ -76,6 +76,7 @@ func run() error {
 		return errors.New("unknown installer command")
 	}
 	f := flag.NewFlagSet(cmd, flag.ContinueOnError)
+	jsonFlag := f.Bool("json", false, "emit machine-readable JSON instead of human output")
 	platform := f.String("platform", "", "athena|rook; normally detected from release manifest")
 	ota := f.String("ota", "", "local OTA ZIP on Echo")
 	otaURL := f.String("ota-url", "", "owner-selected OTA HTTP(S) URL")
@@ -97,6 +98,7 @@ func run() error {
 	if f.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
 	}
+	jsonOutput = jsonOutput || *jsonFlag
 	if *removeOTA && *otaURL == "" {
 		return errors.New("--delete-downloaded-ota requires --ota-url")
 	}
@@ -144,8 +146,7 @@ func run() error {
 			return e
 		}
 		meter.Stop()
-		printJSON(out)
-		return nil
+		return outputResult(os.Stdout, jsonOutput, out, func() { printMutation(os.Stdout, cmd, out) })
 	}
 	if *ota != "" && *otaURL != "" {
 		return errors.New("select only one --ota or --ota-url")
@@ -245,14 +246,13 @@ func run() error {
 		return e
 	}
 	collectedItems := extraction.Items
-	summary := map[string]any{"platform": *platform, "ota_format": extraction.Metadata.OTAFormat, "factory_files": extraction.Metadata.Files, "factory_bytes": extraction.Metadata.Bytes, "dependency_edges": extraction.Metadata.DependencyEdges, "firmware": extraction.Metadata.Firmware, "cache": map[string]any{"hit": extraction.Hit, "path": extraction.Path, "source_sha256": extraction.Metadata.SourceSHA256}}
+	summary := map[string]any{"platform": *platform, "ota_format": extraction.Metadata.OTAFormat, "factory_files": extraction.Metadata.Files, "factory_bytes": extraction.Metadata.Bytes, "dependency_edges": extraction.Metadata.DependencyEdges, "firmware": extraction.Metadata.Firmware, "fire_os_version": fireOSForCache(extraction.Metadata), "platform_label": displayPlatform(*platform), "cache": map[string]any{"hit": extraction.Hit, "path": extraction.Path, "source_sha256": extraction.Metadata.SourceSHA256}}
 	if *otaURL != "" && downloadedOTA != "" {
 		summary["downloaded_ota"] = map[string]any{"path": downloadedOTA, "retained": !*removeOTA}
 	}
 	if cmd == "inspect" {
 		meter.Stop()
-		printJSON(summary)
-		return nil
+		return outputResult(os.Stdout, jsonOutput, summary, func() { printInspection(os.Stdout, summary) })
 	}
 	if cmd == "check-vendor" {
 		meter.Phase("Comparing selected OTA vendor files against live /vendor")
@@ -329,8 +329,7 @@ func run() error {
 		}
 		summary["result"] = result
 		meter.Stop()
-		printJSON(summary)
-		return nil
+		return outputResult(os.Stdout, jsonOutput, summary, func() { printInstallResult(os.Stdout, summary) })
 	}
 	return fmt.Errorf("unsupported action: %s", strings.TrimSpace(cmd))
 }

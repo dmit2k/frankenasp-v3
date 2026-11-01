@@ -34,17 +34,18 @@ Output: `frankenasp-v3-athena-arm32.tar.gz` and `frankenasp-v3-rook-arm32.tar.gz
 
 ## Basic Echo commands
 
-Transfer the matching archive to `/data/techo5-linux` and connect as root:
+Transfer the matching archive to the Echo and extract its platform-specific root folder into **`/data/techo5-linux/asp-installer-v3/`**. Each package update **replaces the entire previous installer package** in that directory; it does not touch installed `/data/techo5-linux/external-asp` or the separate `/data/techo5-linux/asp-installer-cache`.
+
+Connect as root and run commands from the unpacked package:
 
 ```sh
-cd /data/techo5-linux
-tar -xzf frankenasp-v3-athena-arm32.tar.gz
-cd frankenasp-athena
+cd /data/techo5-linux/asp-installer-v3
+# Contains asp-installer and assets/ from the current release.
 
 ./asp-installer version
 ./asp-installer inspect --ota /data/techo5-linux/update.bin
 ./asp-installer status
-./asp-installer status-json
+./asp-installer status --json
 ./asp-installer check --ota /data/techo5-linux/update.bin
 ./asp-installer check-json --ota /data/techo5-linux/update.bin
 ./asp-installer check-vendor --ota /data/techo5-linux/update.bin
@@ -53,7 +54,7 @@ cd frankenasp-athena
 
 Instead of `--ota FILE`, use `--ota-url 'https://user-selected-host/path/update.bin'` for a direct device download. The release manifest selects the platform automatically. A successfully downloaded OTA is retained **inside** `/data/techo5-linux/asp-installer-cache/ota-images/`, normally as a readable name such as `rook-fireos-5.5.6.9-build-690918120.bin` or `athena-fireos-7574.1-build-PS75741-7080.bin` (with `-variant-N` for different contents). The precise path is displayed in command output and `status`; the original OTA is not bundled into FrankenASP releases. Partial/failed downloads are cleaned up automatically. Add **`--delete-downloaded-ota`** only when you explicitly want the newly downloaded image discarded after the command instead of retaining it as a cache archive. Previously saved images and user-supplied local files are not removed by this flag.
 
-`status`, `check`, and `check-vendor` print human-readable summaries. Use `status-json`, `check-json`, or `check-vendor-json` for full machine-readable JSON with the same respective flags. `inspect` and mutation commands continue returning JSON. All long operations print phase messages on stderr and a single-line activity spinner when attached to a terminal; structured results remain on stdout. Every command also prints **total elapsed wall-clock time** to stderr after success or failure, leaving JSON stdout unchanged. A progress *scan* is **not a single file**: it is another pass through a compressed `system` or `vendor` partition to collect missing ext4 blocks that may serve multiple libraries. Output includes the monotonically increasing overall scan number and a per-partition pass counter; on-screen spinner lines are erased before log messages and on exit.
+**Every command prints human-readable output by default:** `version`, `status`, `inspect`, `check`, `check-vendor`, `install`, `update`, `uninstall` and `rollback`. Specify **`--json`** to obtain machine-readable JSON, for example `inspect --json`, `install --yes --json`, or `uninstall --yes --json`. The legacy `status-json`, `check-json` and `check-vendor-json` aliases remain supported; all commands also accept the corresponding `*-json` alias. Progress messages, warnings and elapsed time are written to stderr, so JSON stdout remains valid without filtering. All long operations print phase messages on stderr and a single-line activity spinner when attached to a terminal; structured results remain on stdout. Every command also prints **total elapsed wall-clock time** to stderr after success or failure, leaving JSON stdout unchanged. A progress *scan* is **not a single file**: it is another pass through a compressed `system` or `vendor` partition to collect missing ext4 blocks that may serve multiple libraries. Output includes the monotonically increasing overall scan number and a per-partition pass counter; on-screen spinner lines are erased before log messages and on exit.
 
 ## Reusable extracted-OTA cache
 

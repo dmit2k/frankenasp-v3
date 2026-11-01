@@ -34,16 +34,22 @@ func download(ctx context.Context, raw, dir string) (string, func(), error) {
 // extraReserve protects staged runtime and backup capacity on the same filesystem.
 // OTA data must never consume that space while downloading.
 func downloadWithReserve(ctx context.Context, raw, dir string, extraReserve uint64) (string, func(), error) {
+	return downloadWithBudget(ctx, raw, dir, downloadBudget{need: diskNeed{Role: "OTA download", Path: dir, Rootfs: extraReserve, Reserve: spaceReserve}}, nil)
+}
+
+func downloadWithBudget(ctx context.Context, raw, dir string, budget downloadBudget, meter *progressMeter) (string, func(), error) {
 	u, e := url.Parse(raw)
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return "", nil, errors.New("OTA URL must be HTTP(S)")
 	}
-	initial, e := sumSpace(128<<20, extraReserve)
-	if e != nil {
-		return "", nil, e
-	}
-	if e = enoughSpace(dir, initial); e != nil {
-		return "", nil, e
+	// This is only minimum headroom to begin a transfer. It is not an
+	// estimate of OTA size. Content-Length is checked before writing its body.
+	initial := budget.need
+	initial.OTA = 128 << 20
+	initial.Path = dir
+	initial.Role = "OTA download (minimum start headroom, NOT OTA size)"
+	if e = requireSpace(initial, nil); e != nil {
+		return "", nil, fmt.Errorf("insufficient space for OTA transfer: %w", e)
 	}
 	file, e := os.CreateTemp(dir, ".asp-installer-ota-partial-")
 	if e != nil {
@@ -84,16 +90,17 @@ func downloadWithReserve(ctx context.Context, raw, dir string, extraReserve uint
 		cleanup()
 		return "", nil, errors.New("OTA exceeds 2GiB")
 	}
-	if resp.ContentLength > 0 {
-		need, err := sumSpace(uint64(resp.ContentLength), 64<<20, extraReserve)
-		if err != nil {
+	if resp.ContentLength >= 0 {
+		need := budget.need
+		need.OTA = uint64(resp.ContentLength)
+		need.Path = dir
+		need.Role = "OTA download (HTTP Content-Length)"
+		if e = requireSpace(need, meter); e != nil {
 			cleanup()
-			return "", nil, err
+			return "", nil, fmt.Errorf("insufficient space for OTA transfer: %w", e)
 		}
-		if e = enoughSpace(dir, need); e != nil {
-			cleanup()
-			return "", nil, e
-		}
+	} else if meter != nil {
+		meter.Note("OTA server provided no Content-Length; download is capped at 2 GiB and free-space safety margin checked during transfer")
 	}
 	var n int64
 	buf := make([]byte, 256<<10)
@@ -106,12 +113,11 @@ func downloadWithReserve(ctx context.Context, raw, dir string, extraReserve uint
 				return "", nil, errors.New("OTA exceeded 2GiB")
 			}
 			if n%(16<<20) < int64(count) {
-				need, err := sumSpace(64<<20, extraReserve)
-				if err != nil {
-					cleanup()
-					return "", nil, err
-				}
-				if e = enoughSpace(dir, need); e != nil {
+				remaining := budget.need
+				remaining.Path = dir
+				remaining.OTA = 0 // already-downloaded bytes are now reflected in statfs free space
+				remaining.Role = "OTA download (remaining free-space guard)"
+				if e = requireSpace(remaining, nil); e != nil {
 					cleanup()
 					return "", nil, e
 				}
@@ -132,6 +138,9 @@ func downloadWithReserve(ctx context.Context, raw, dir string, extraReserve uint
 	if n == 0 || (resp.ContentLength >= 0 && resp.ContentLength != n) {
 		cleanup()
 		return "", nil, errors.New("OTA download truncated")
+	}
+	if meter != nil {
+		meter.Note(fmt.Sprintf("OTA transfer complete: %d MiB (%d bytes); free-space guard preserved", mbCeil(uint64(n)), n))
 	}
 	if e = file.Sync(); e != nil {
 		cleanup()

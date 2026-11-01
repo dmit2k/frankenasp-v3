@@ -65,6 +65,7 @@ type diskNeed struct {
 	Role    string
 	Path    string
 	OTA     uint64
+	Cache   uint64
 	Rootfs  uint64
 	Backup  uint64
 	Reserve uint64
@@ -75,6 +76,7 @@ type diskReport struct {
 	RequiredMiB  uint64 `json:"required_mib"`
 	ReserveMiB   uint64 `json:"reserve_mib"`
 	OTABytes     uint64 `json:"ota_bytes"`
+	CacheBytes   uint64 `json:"cache_bytes"`
 	RootfsBytes  uint64 `json:"rootfs_bytes"`
 	BackupBytes  uint64 `json:"backup_bytes"`
 }
@@ -87,13 +89,13 @@ func mbCeil(n uint64) uint64 {
 	return whole
 }
 func evaluateSpace(available uint64, need diskNeed) (diskReport, error) {
-	required, e := sumSpace(need.OTA, need.Rootfs, need.Backup, need.Reserve)
+	required, e := sumSpace(need.OTA, need.Cache, need.Rootfs, need.Backup, need.Reserve)
 	if e != nil {
 		return diskReport{}, e
 	}
-	result := diskReport{Role: need.Role, AvailableMiB: available >> 20, RequiredMiB: mbCeil(required), ReserveMiB: mbCeil(need.Reserve), OTABytes: need.OTA, RootfsBytes: need.Rootfs, BackupBytes: need.Backup}
+	result := diskReport{Role: need.Role, AvailableMiB: available >> 20, RequiredMiB: mbCeil(required), ReserveMiB: mbCeil(need.Reserve), OTABytes: need.OTA, CacheBytes: need.Cache, RootfsBytes: need.Rootfs, BackupBytes: need.Backup}
 	if available < required {
-		return result, fmt.Errorf("insufficient disk space on %s: %d MiB available, %d MiB required (OTA %d MiB + staged rootfs %d MiB + backup %d MiB + reserve %d MiB)", need.Role, available>>20, mbCeil(required), mbCeil(need.OTA), mbCeil(need.Rootfs), mbCeil(need.Backup), mbCeil(need.Reserve))
+		return result, fmt.Errorf("insufficient disk space on %s: %d MiB available, %d MiB required (OTA %d MiB + extraction cache %d MiB + staged runtime %d MiB + backup %d MiB + safety reserve %d MiB)", need.Role, available>>20, mbCeil(required), mbCeil(need.OTA), mbCeil(need.Cache), mbCeil(need.Rootfs), mbCeil(need.Backup), mbCeil(need.Reserve))
 	}
 	return result, nil
 }
@@ -104,7 +106,7 @@ func requireSpace(need diskNeed, m *progressMeter) error {
 	}
 	report, e := evaluateSpace(stat.Available, need)
 	if m != nil {
-		m.Note(fmt.Sprintf("Disk preflight [%s]: %d MiB free; %d MiB required (OTA %d, runtime %d, backup %d, safety reserve %d MiB)", report.Role, report.AvailableMiB, report.RequiredMiB, mbCeil(need.OTA), mbCeil(need.Rootfs), mbCeil(need.Backup), report.ReserveMiB))
+		m.Note(fmt.Sprintf("Disk capacity [%s on %s]: %d MiB free; %d MiB reserved/required (OTA %d, extraction cache %d, staged runtime %d, backup %d, safety reserve %d MiB)", report.Role, need.Path, report.AvailableMiB, report.RequiredMiB, mbCeil(need.OTA), mbCeil(need.Cache), mbCeil(need.Rootfs), mbCeil(need.Backup), report.ReserveMiB))
 	}
 	return e
 }
@@ -185,42 +187,6 @@ func predictedRootfsBytes(items map[string][]byte, assets string, platform, mode
 		return 0, e
 	}
 	return size, nil
-}
-func preflightBeforeOTA(cmd, otaURL, tmpDir string, noBackup bool, m *progressMeter) (uint64, error) {
-	if cmd != "install" && cmd != "update" {
-		return 0, nil
-	}
-	target, e := diskAt(parentPath())
-	if e != nil {
-		return 0, e
-	}
-	var backup uint64
-	if cmd == "update" && !noBackup {
-		backup, e = estimateTreeBackup(destination)
-		if e != nil {
-			return 0, e
-		}
-	}
-	// Before extraction, reserve room for the full bounded runtime rather than
-	// guessing from a particular firmware image. Exact bytes are checked later.
-	stage := downloadStagingBound + stagingOverhead
-	if e = requireSpace(diskNeed{Role: "installation filesystem (pre-download)", Path: parentPath(), Rootfs: stage, Backup: backup, Reserve: spaceReserve}, m); e != nil {
-		return 0, e
-	}
-	if otaURL == "" {
-		return 0, nil
-	}
-	cache, e := diskAt(tmpDir)
-	if e != nil {
-		return 0, e
-	}
-	if cache.Dev == target.Dev {
-		return stage + backup, nil
-	}
-	if e = requireSpace(diskNeed{Role: "OTA temporary filesystem", Path: tmpDir, Reserve: spaceReserve}, m); e != nil {
-		return 0, e
-	}
-	return 0, nil
 }
 func preflightBuild(cmd, platform, mode, assets string, items map[string][]byte, noBackup bool, m *progressMeter) error {
 	if cmd != "install" && cmd != "update" {

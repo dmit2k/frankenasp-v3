@@ -53,7 +53,7 @@ cd frankenasp-athena
 
 Instead of `--ota FILE`, use `--ota-url 'https://user-selected-host/path/update.bin'` for a direct device download. The release manifest selects the platform automatically. A successfully downloaded OTA is **not deleted**. Its exact location is printed, for example `/data/techo5-linux/asp-installer-ota-<random>-update.bin`. Reuse this file in subsequent operations with `--ota /data/techo5-linux/asp-installer-ota-...-update.bin` to avoid downloading again. Partial/failed downloads are cleaned up automatically. Add **`--delete-downloaded-ota`** to a command using `--ota-url` only when you explicitly want the successfully downloaded file deleted at the end of that operation (including on later extraction failure).
 
-`status`, `check`, and `check-vendor` print human-readable summaries. Use `status-json`, `check-json`, or `check-vendor-json` for full machine-readable JSON with the same respective flags. `inspect` and mutation commands continue returning JSON. All long operations print phase messages on stderr and a single-line activity spinner when attached to a terminal; structured results remain on stdout. A progress *scan* is **not a single file**: it is another pass through a compressed `system` or `vendor` partition to collect missing ext4 blocks that may serve multiple libraries. Output includes the monotonically increasing overall scan number and a per-partition pass counter; on-screen spinner lines are erased before log messages and on exit.
+`status`, `check`, and `check-vendor` print human-readable summaries. Use `status-json`, `check-json`, or `check-vendor-json` for full machine-readable JSON with the same respective flags. `inspect` and mutation commands continue returning JSON. All long operations print phase messages on stderr and a single-line activity spinner when attached to a terminal; structured results remain on stdout. Every command also prints **total elapsed wall-clock time** to stderr after success or failure, leaving JSON stdout unchanged. A progress *scan* is **not a single file**: it is another pass through a compressed `system` or `vendor` partition to collect missing ext4 blocks that may serve multiple libraries. Output includes the monotonically increasing overall scan number and a per-partition pass counter; on-screen spinner lines are erased before log messages and on exit.
 
 ## Reusable extracted-OTA cache
 
@@ -81,7 +81,7 @@ Example:
 ./asp-installer inspect --ota-url 'https://your-ota-source/update.bin' --refresh-cache
 ```
 
-When extraction is required, the free-space preflight also reserves room for the private cache in addition to download, staged rootfs, backup and the existing 64 MiB safety margin. `--cache-dir ABSOLUTE_PATH` overrides its location if you intentionally need a different filesystem. Cache validation happens before any installation mutation.
+When extraction is required, free-space preflight separately labels the private **extraction cache**, optional **staged runtime**, backup, downloaded OTA and 64 MiB safety margin. Components on the **same** filesystem are added together; different filesystems each receive a single 64 MiB safety margin. For `--ota-url`, a preliminary capacity report explicitly says that OTA size is **not yet known**; after reading the HTTP `Content-Length`, the installer prints the **combined total including OTA bytes** before accepting the response body. If the server omits `Content-Length`, the installer retains the runtime/cache/backup reserve and checks free space while streaming the OTA. A valid cached extraction skips the pre-extraction reserve entirely. `--cache-dir ABSOLUTE_PATH` overrides its location if you intentionally need a different filesystem. Cache validation happens before any installation mutation.
 
 ## Install and update
 
@@ -116,15 +116,16 @@ The installer scans process executable identities, open file descriptors, memory
 
 ## Disk-space preflight
 
-All mutation commands check the filesystem free-space budget *before* writing a new runtime or archival backup. A fixed 64 MiB reserve protects the normal device filesystem from being filled by installer operations. Before an OTA URL download for install/update, the installer reserves a conservative 168 MiB capacity for a future private runtime plus the estimated uncompressed upper bound of the backup, if enabled. After the OTA has been selectively extracted into memory, it recalculates the stage budget from the actual dependency closure, bundled assets, per-file filesystem allocation, directory metadata and backup estimate.
+The installer preserves a fixed **64 MiB safety margin per filesystem** and checks cumulative requirements before modifying an installed runtime. The conservative **168 MiB extraction-cache bound** is distinct from the optional **168 MiB staged-runtime bound**; neither represents the OTA size. Actual extracted factory files are normally substantially smaller, and their precise disk allocation is checked before cache publication or runtime staging.
 
-- If the OTA URL supplies an HTTP `Content-Length`, the exact transfer size plus reserved future runtime, backup and safety margin must fit **before downloading the body**.
-- Without a `Content-Length`, available space is checked while downloading; the OTA download is aborted before it consumes space reserved for installation.
-- The OTA temporary directory and the target rootfs are checked separately if located on **different filesystems**, using filesystem device identifiers. A local `--ota` already occupies its disk space and is not counted twice.
-- `--force-no-backup` excludes the optional TAR archive but **not** the new staged rootfs, the old retained generation, or the 64 MiB reserve. `rollback` separately reserves space for its mandatory backup.
-- Each budget prints the free/required disk space and the OTA, runtime, backup and safety-margin components to stderr. The installer rejects an insufficient budget before modifying the installed tree.
+- **Valid cache hit:** no new extraction or download, so no pre-extraction/cache-write reserve is applied. Installation still checks its actual staged runtime and backup requirements before writing.
+- **Local OTA cache miss:** the existing OTA is not counted as another disk allocation. Cache capacity, optional runtime stage, backup and the safety margin are summed by filesystem.
+- **Remote OTA cache miss:** the preliminary report states *OTA size pending HTTP Content-Length*. When the server provides a length, the complete **OTA + extraction cache + staged runtime + backup + 64 MiB reserve** is reported and checked on any shared filesystem **before streaming the body**. On separate filesystems, only the applicable roles are charged to each one. Without a length, the download remains capped at 2 GiB and capacity is checked during streaming while preserving all remaining-stage reserves.
+- **Live download monitoring:** already-written OTA bytes are reflected in filesystem free space and are **not counted again** by the streaming guard. `--force-no-backup` excludes only the optional update archive, not its staged runtime or the safety margin.
 
-This is an advance capacity estimate, not disk-space allocation: another process writing to the same filesystem can still cause `ENOSPC` between checks. Normal filesystem errors remain fatal and do not authorize overwriting a known generation. The old installation is retained through the update transaction.
+For example, an `install` with new extraction on a single filesystem has a conservative **400 MiB preliminary reserve** (168 MiB cache + 168 MiB staged runtime + 64 MiB safety). The OTA size is unknown at this point: it is **not** a 400 MiB firmware estimate. If the HTTP response subsequently reports a 1,100 MiB OTA, the full required free space becomes **1,500 MiB** before download. The output labels each component instead of showing `runtime 168` for the cache.
+
+All capacity checks are estimates: concurrent writes can still cause an `ENOSPC` error. The installer never treats an unknown OTA size as zero for its final streaming guard.
 
 ## Rollback and uninstall
 

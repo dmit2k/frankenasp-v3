@@ -8,57 +8,6 @@ import (
 	"path/filepath"
 )
 
-func cacheBudgetBeforeExtraction(cacheDir, installCmd, tmpDir, otaURL string, noBackup bool, m *progressMeter) (uint64, error) {
-	cacheFS, e := diskAt(cacheDir)
-	if e != nil {
-		return 0, e
-	}
-	targetFS := cacheFS
-	if installCmd == "install" || installCmd == "update" {
-		targetFS, e = diskAt(parentPath())
-		if e != nil {
-			return 0, e
-		}
-	}
-	// The closure can reach 128MiB. Reserve allocation overhead and filesystem margin.
-	cacheBound := downloadStagingBound + stagingOverhead
-	var backup uint64
-	var runtime uint64
-	if installCmd == "install" || installCmd == "update" {
-		runtime = downloadStagingBound + stagingOverhead
-		if installCmd == "update" && !noBackup {
-			backup, e = estimateTreeBackup(destination)
-			if e != nil {
-				return 0, e
-			}
-		}
-	}
-	cacheNeed := diskNeed{Role: "pre-extraction cache capacity", Path: cacheDir, Rootfs: cacheBound, Reserve: spaceReserve}
-	if cacheFS.Dev == targetFS.Dev {
-		cacheNeed.Rootfs += runtime
-		cacheNeed.Backup = backup
-	}
-	if e = requireSpace(cacheNeed, m); e != nil {
-		return 0, e
-	}
-	if cacheFS.Dev != targetFS.Dev && runtime != 0 {
-		if e = requireSpace(diskNeed{Role: "installation capacity", Path: parentPath(), Rootfs: runtime, Backup: backup, Reserve: spaceReserve}, m); e != nil {
-			return 0, e
-		}
-	}
-	var downloadReserve uint64
-	if otaURL != "" {
-		tmpFS, er := diskAt(tmpDir)
-		if er != nil {
-			return 0, er
-		}
-		if tmpFS.Dev == cacheFS.Dev {
-			downloadReserve += cacheBound
-		}
-
-	}
-	return downloadReserve, nil
-}
 func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceURL, tmpDir, cmd string, child []byte, noBackup, refresh, deleteOTA bool, m *progressMeter) (cacheResult, string, func(), error) {
 	urlHash := ""
 	sourceHash := ""
@@ -98,15 +47,7 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	if e := ctx.Err(); e != nil {
 		return cacheResult{}, "", nil, e
 	}
-	downloadReserve, e := cacheBudgetBeforeExtraction(cacheDir, cmd, tmpDir, sourceURL, noBackup, m)
-	if e != nil {
-		return cacheResult{}, "", nil, e
-	}
-	extra, e := preflightBeforeOTA(cmd, sourceURL, tmpDir, noBackup, m)
-	if e != nil {
-		return cacheResult{}, "", nil, e
-	}
-	downloadReserve, e = sumSpace(downloadReserve, extra)
+	downloadBudget, e := preflightCacheAndOTA(cacheDir, tmpDir, cmd, sourceURL != "", noBackup, m)
 	if e != nil {
 		return cacheResult{}, "", nil, e
 	}
@@ -114,7 +55,7 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	var cleanup func()
 	if sourceURL != "" {
 		m.Phase("Downloading OTA: no validated cache matches the requested URL")
-		source, cleanup, e = downloadWithReserve(ctx, sourceURL, tmpDir, downloadReserve)
+		source, cleanup, e = downloadWithBudget(ctx, sourceURL, tmpDir, downloadBudget, m)
 		if e != nil {
 			return cacheResult{}, "", nil, e
 		}

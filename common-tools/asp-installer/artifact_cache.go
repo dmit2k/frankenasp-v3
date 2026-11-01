@@ -434,7 +434,7 @@ func publishCache(base string, meta cacheMetadata, items map[string][]byte, refr
 	if e != nil {
 		return cacheResult{}, e
 	}
-	if e = requireSpace(diskNeed{Role: "extracted OTA cache", Path: base, Rootfs: required, Reserve: spaceReserve}, m); e != nil {
+	if e = requireSpace(diskNeed{Role: "extracted OTA cache", Path: base, Cache: required, Reserve: spaceReserve}, m); e != nil {
 		return cacheResult{}, e
 	}
 	stage, e := os.MkdirTemp(base, ".cache-building-")

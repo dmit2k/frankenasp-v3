@@ -11,16 +11,33 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 var revision = "development"
 
 func printJSON(v any) { b, _ := json.MarshalIndent(v, "", "  "); fmt.Println(string(b)) }
 func main() {
-	if e := run(); e != nil {
+	started := time.Now()
+	e := run()
+	if e != nil {
 		fmt.Fprintln(os.Stderr, "asp-installer:", e)
+	}
+	// Always show overall wall-clock time, including failed commands.
+	// stderr leaves stdout as a clean JSON document for machine consumers.
+	fmt.Fprintf(os.Stderr, "asp-installer: Total elapsed: %s\n", elapsedText(time.Since(started)))
+	if e != nil {
 		os.Exit(2)
 	}
+}
+func elapsedText(duration time.Duration) string {
+	if duration > 0 && duration < time.Millisecond {
+		return "<1ms"
+	}
+	if duration < time.Second {
+		return duration.Round(time.Millisecond).String()
+	}
+	return duration.Round(100 * time.Millisecond).String()
 }
 func run() error {
 	if len(os.Args) < 2 {

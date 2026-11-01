@@ -467,6 +467,5 @@ func installOrUpdate(platform, assets string, items map[string][]byte, source, m
 		return result, e
 	}
 	result["current"] = installedVersion()
-	result["notice"] = "Turn External ASP off in TECHO5 settings before maintenance; re-enable it manually after verifying the new runtime."
 	return result, nil
 }

@@ -88,7 +88,6 @@ func uninstallAll(purgeBackups, restart bool, m *progressMeter) (map[string]any,
 	if e != nil {
 		return result, e
 	}
-	result["notice"] = "Uninstalled. Disable External ASP manually in TECHO5 settings, or keep Built-in selected."
 	if !purgeBackups {
 		result["backup_directory"] = filepath.Join(parentPath(), backupFolder)
 	}
@@ -137,6 +136,5 @@ func rollbackGeneration(generation string, restart bool, m *progressMeter) (map[
 		return result, e
 	}
 	result["current"] = installedVersion()
-	result["notice"] = "Rollback complete; select External ASP manually in TECHO5 after validation."
 	return result, nil
 }

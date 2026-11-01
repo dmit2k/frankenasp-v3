@@ -15,7 +15,7 @@ func TestStatusHumanSummary(t *testing.T) {
 	}
 	var out bytes.Buffer
 	printStatus(&out, data)
-	for _, fragment := range []string{"Files: present (running/active state NOT checked)", "Installed target: Echo Spot (1st Gen, 2017) [rook]", "FrankenASP revision: abc123", "Vendor source: bundled", "Saved generations: 1", "Backup archives: 1", "status-json"} {
+	for _, fragment := range []string{"Files: present (running/active state NOT checked)", "Installed target: Echo Spot (1st Gen, 2017) [rook]", "FrankenASP revision: abc123", "Vendor source: bundled", "Saved generations: 1", "Backup archives: 1"} {
 		if !strings.Contains(out.String(), fragment) {
 			t.Errorf("missing %q in %s", fragment, out.String())
 		}
@@ -42,13 +42,13 @@ func TestCheckHumanSummaries(t *testing.T) {
 	data := map[string]any{"platform": "athena", "vendor": diff, "recommendation": "use matched bundled vendor rootfs", "live_vendor_usable": false}
 	var out bytes.Buffer
 	printVendorCheck(&out, data)
-	if !strings.Contains(out.String(), "DIFFERENCES FOUND") || !strings.Contains(out.String(), "vendor/lib/libasp.so") || !strings.Contains(out.String(), "check-vendor-json") {
+	if !strings.Contains(out.String(), "DIFFERENCES FOUND") || !strings.Contains(out.String(), "vendor/lib/libasp.so") {
 		t.Fatal(out.String())
 	}
 	data = map[string]any{"platform": "athena", "vendor_mode": "live", "comparison": compareResult{Compared: 3, Matching: true}, "live_vendor_comparison": diff, "update_required": true}
 	out.Reset()
 	printRuntimeCheck(&out, data)
-	if !strings.Contains(out.String(), "Update: required") || !strings.Contains(out.String(), "Live /vendor:") || !strings.Contains(out.String(), "check-json") {
+	if !strings.Contains(out.String(), "Update: required") || !strings.Contains(out.String(), "Live /vendor:") {
 		t.Fatal(out.String())
 	}
 }

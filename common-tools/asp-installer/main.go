@@ -22,14 +22,14 @@ func printJSON(v any) { b, _ := json.MarshalIndent(v, "", "  "); fmt.Println(str
 func main() {
 	started := time.Now()
 	printRunBanner(os.Stderr, revision)
-	e := run()
-	if e != nil {
-		fmt.Fprintln(os.Stderr, "asp-installer:", e)
+	err := run()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "asp-installer:", err)
 	}
-	// Always show overall wall-clock time, including failed commands.
-	// stderr leaves stdout as a clean JSON document for machine consumers.
+	// Preserve elapsed wall-clock reporting, including failed commands.
+	// Use stderr to keep machine-readable JSON on stdout unchanged.
 	fmt.Fprintf(os.Stderr, "asp-installer: Total elapsed: %s\n", elapsedText(time.Since(started)))
-	if e != nil {
+	if err != nil {
 		os.Exit(2)
 	}
 }
@@ -273,7 +273,7 @@ func run() error {
 		return outputResult(os.Stdout, jsonOutput, summary, func() { printInspection(os.Stdout, summary) })
 	}
 	if cmd == "check-vendor" {
-		meter.Phase("Comparing selected OTA vendor files against live /vendor")
+		meter.Phase("Comparing selected factory vendor files against live /vendor")
 		diff := compareVendor(collectedItems, "/vendor")
 		if err := vendorReadOnly(); err != nil {
 			diff.Matching = false
@@ -303,7 +303,7 @@ func run() error {
 		summary["vendor_inspection"] = inspection
 	}
 	if cmd == "check" {
-		meter.Phase("Comparing installed FrankenASP and extracted OTA closure")
+		meter.Phase("Comparing installed FrankenASP and factory files")
 		// Current installed mode is authoritative unless explicitly overridden.
 		if *vendorMode == "auto" {
 			before := installedVersion()

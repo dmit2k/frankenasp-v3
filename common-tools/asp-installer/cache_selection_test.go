@@ -39,11 +39,31 @@ func TestFirmwareWithoutOTAAutoAndExplicit(t *testing.T) {
 		if e != nil || selected.Path != found.Path || path != "" || cleanup != nil {
 			t.Fatalf("firmware %q failed: %v", firmware, e)
 		}
-		if !strings.Contains(out.String(), "Using verified firmware cache") {
+		if !strings.Contains(out.String(), "Verified factory files") {
 			t.Fatalf("missing cache-hit message: %s", out.String())
 		}
 	}
 }
+func TestCachedFirmwareRequiresNoOTAArchiveInEveryMode(t *testing.T) {
+	base, saved := fixtureCache(t)
+	for _, mode := range []string{"inspect", "install", "update", "check", "check-vendor"} {
+		t.Run(mode, func(t *testing.T) {
+			var output bytes.Buffer
+			meter := &progressMeter{out: &output, done: make(chan struct{})}
+			selected, otaPath, cleanup, err := loadExtracted(context.Background(), base, "athena", "", "", saved.Metadata.Firmware, t.TempDir(), mode, false, false, false, meter)
+			meter.Close()
+			if err != nil || selected.Path != saved.Path || otaPath != "" || cleanup != nil {
+				t.Fatalf("cached firmware selection requires archive in %s: %+v %s %v", mode, selected, otaPath, err)
+			}
+			for _, unwanted := range []string{"OTA archive not available", "lstat", "ota-images/", "Factory extraction: "} {
+				if strings.Contains(output.String(), unwanted) {
+					t.Fatalf("irrelevant %s message %q: %s", mode, unwanted, output.String())
+				}
+			}
+		})
+	}
+}
+
 func TestFirmwareVariantsMustBeSelectedExplicitly(t *testing.T) {
 	base, found := fixtureCache(t)
 	alt := found.Metadata

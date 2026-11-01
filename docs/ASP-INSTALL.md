@@ -75,7 +75,7 @@ cd /data/techo5-linux/asp-installer-v3
 | `rollback --generation NAME --yes` | Restore a listed saved runtime generation, retaining the replaced generation and creating a backup. |
 | `uninstall --yes` | Remove the recognized FrankenASP runtime and installer-managed generations; preserve factory caches and, by default, backup archives. |
 
-**Output format:** all commands print readable text by default. Use `--json` on the command to request a structured JSON result. The aliases `status-json`, `check-json`, `check-vendor-json`, and the corresponding `*-json` forms are also accepted. Progress messages, startup version and total elapsed time are printed to **stderr**; JSON results go to **stdout** only.
+**Output format:** all commands print readable text by default. Use `--json` on the command to request a structured JSON result. The aliases `status-json`, `check-json`, `check-vendor-json`, and the corresponding `*-json` forms are also accepted. Progress messages, the startup version, and total elapsed time (including failed commands) are printed to **stderr**; JSON results go to **stdout** only. No redundant JSON invocation hint is appended.
 
 Each command prints the running installer's version in its startup banner (for example, `asp-installer v3.1`); `version` and `version --json` report it explicitly. The installed FrankenASP runtime revision and Amazon firmware build are separate values.
 

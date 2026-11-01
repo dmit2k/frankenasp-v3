@@ -93,10 +93,10 @@ func printStatus(w io.Writer, v map[string]any) {
 		}
 		fmt.Fprintf(w, "  Amazon firmware build: %s\n  Extraction: %s (%d verified files)\n  Cache path: %s\n", c.Firmware, c.State, c.FactoryFiles, c.Path)
 		if c.OTAImage != "" {
-			fmt.Fprintf(w, "  Original OTA: %s\n", c.OTAImage)
+			fmt.Fprintf(w, "  Downloaded OTA: %s\n", c.OTAImage)
 		}
 	}
-	fmt.Fprintf(w, "Saved original OTA images: %d\n", len(images))
+	fmt.Fprintf(w, "Saved downloaded OTA images: %d\n", len(images))
 	for _, img := range images {
 		if img.PlatformLabel != "" {
 			fmt.Fprintf(w, "  Target: %s\n", img.PlatformLabel)
@@ -112,7 +112,6 @@ func printStatus(w io.Writer, v map[string]any) {
 			fmt.Fprintf(w, "  WARNING: %s\n", img.Error)
 		}
 	}
-	fmt.Fprintln(w, "More details: asp-installer status-json")
 }
 func displayDifferences(w io.Writer, result compareResult) {
 	if result.Matching && result.Warning == "" {
@@ -136,21 +135,18 @@ func displayDifferences(w io.Writer, result compareResult) {
 func printVendorCheck(w io.Writer, v map[string]any) {
 	fmt.Fprintln(w, "FrankenASP V3 — factory vendor comparison")
 	fmt.Fprintln(w, "Platform: "+textField(v, "platform"))
-	fmt.Fprintf(w, "OTA format: %s; factory files extracted: %v\n", textField(v, "ota_format"), textField(v, "factory_files"))
 	diff, _ := v["vendor"].(compareResult)
 	displayDifferences(w, diff)
 	if usable, ok := v["live_vendor_usable"].(bool); ok && usable {
-		fmt.Fprintln(w, "Live /vendor: usable for this OTA")
+		fmt.Fprintln(w, "Live /vendor: usable for this firmware")
 	} else {
-		fmt.Fprintln(w, "Live /vendor: not verified for this OTA")
+		fmt.Fprintln(w, "Live /vendor: not verified for this firmware")
 	}
 	fmt.Fprintln(w, "Recommendation: "+textField(v, "recommendation"))
-	fmt.Fprintln(w, "Details: asp-installer check-vendor-json [same options]")
 }
 func printRuntimeCheck(w io.Writer, v map[string]any) {
 	fmt.Fprintln(w, "FrankenASP V3 — installed runtime comparison")
 	fmt.Fprintln(w, "Platform: "+textField(v, "platform"))
-	fmt.Fprintf(w, "OTA format: %s; factory files extracted: %v\n", textField(v, "ota_format"), textField(v, "factory_files"))
 	fmt.Fprintln(w, "Vendor mode: "+textField(v, "vendor_mode"))
 	diff, _ := v["comparison"].(compareResult)
 	displayDifferences(w, diff)
@@ -163,5 +159,4 @@ func printRuntimeCheck(w io.Writer, v map[string]any) {
 	} else {
 		fmt.Fprintln(w, "Update: not required (files match)")
 	}
-	fmt.Fprintln(w, "Details: asp-installer check-json [same options]")
 }

@@ -9,7 +9,7 @@ import (
 
 // Human-readable output is the default for every command. Structured results
 // are emitted only for an explicit --json flag or a *-json command alias.
-// All progress messages and elapsed-time diagnostics remain on stderr.
+// Progress diagnostics remain on stderr; summaries are written to stdout.
 func outputResult(w io.Writer, asJSON bool, result any, human func()) error {
 	if asJSON {
 		encoder := json.NewEncoder(w)
@@ -55,39 +55,34 @@ func printFactorySummary(w io.Writer, result map[string]any) {
 func printInspection(w io.Writer, result map[string]any) {
 	fmt.Fprintln(w, "FrankenASP V3 — factory firmware inspection complete")
 	printFactorySummary(w, result)
-	fmt.Fprintln(w, "No installed runtime was changed.")
-	fmt.Fprintln(w, "JSON details: asp-installer inspect --json [same options]")
 }
 
 func printInstallResult(w io.Writer, result map[string]any) {
-	action := stringField(mapField(result["result"]), "action")
-	if action == "unknown" {
+	details := mapField(result["result"])
+	action := stringField(details, "action")
+	if action != "update" {
 		action = "install"
 	}
-	fmt.Fprintf(w, "FrankenASP V3 — %s complete\n", strings.ToUpper(action[:1])+action[1:])
-	printFactorySummary(w, result)
-	details := mapField(result["result"])
 	current := mapField(details["current"])
 	if boolField(details, "changed") {
-		fmt.Fprintln(w, "Installed runtime: published successfully")
+		fmt.Fprintf(w, "FrankenASP V3 — %s complete\n", strings.ToUpper(action[:1])+action[1:])
 	} else {
-		fmt.Fprintln(w, "Installed runtime: no changes required")
+		fmt.Fprintln(w, "FrankenASP V3 — no changes required")
 	}
-	fmt.Fprintln(w, "Runtime directory: "+textField(current, "path"))
+	fmt.Fprintf(w, "Target: %s, firmware %s", displayPlatform(stringField(result, "platform")), textField(result, "firmware"))
+	if osVersion := stringField(result, "fire_os_version"); osVersion != "unknown" {
+		fmt.Fprintf(w, " (Fire OS %s)", osVersion)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Runtime: "+textField(current, "path"))
 	fmt.Fprintln(w, "FrankenASP revision: "+textField(current, "release_revision"))
 	fmt.Fprintln(w, "Vendor source: "+textField(result, "vendor_mode"))
-	if backup := details["backup"]; backup != nil {
-		fmt.Fprintln(w, "Backup archive: "+fmt.Sprint(backup))
-	} else {
-		fmt.Fprintln(w, "Backup archive: none")
+	if backup, ok := details["backup"].(string); ok && backup != "" {
+		fmt.Fprintln(w, "Backup archive: "+backup)
 	}
 	if generation, ok := details["previous_generation"].(string); ok && generation != "" {
 		fmt.Fprintln(w, "Previous runtime generation: "+generation)
 	}
-	if hint, ok := details["notice"].(string); ok && hint != "" {
-		fmt.Fprintln(w, "Next step: "+hint)
-	}
-	fmt.Fprintf(w, "JSON details: asp-installer %s --json [same options]\n", action)
 }
 
 func printMutation(w io.Writer, action string, result map[string]any) {
@@ -118,8 +113,4 @@ func printMutation(w io.Writer, action string, result map[string]any) {
 			fmt.Fprintln(w, "Backup archive: "+backup)
 		}
 	}
-	if hint, ok := result["notice"].(string); ok && hint != "" {
-		fmt.Fprintln(w, "Next step: "+hint)
-	}
-	fmt.Fprintf(w, "JSON details: asp-installer %s --json [same options]\n", action)
 }

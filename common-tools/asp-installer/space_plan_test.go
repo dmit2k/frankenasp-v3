@@ -121,21 +121,6 @@ func TestContentLengthPreflightReportsFullSplit(t *testing.T) {
 		t.Fatal(output.String())
 	}
 }
-func TestElapsedText(t *testing.T) {
-	for _, tc := range []struct {
-		d    time.Duration
-		want string
-	}{
-		{234 * time.Millisecond, "234ms"},
-		{1576 * time.Millisecond, "1.6s"},
-		{4*time.Minute + 12*time.Second + 340*time.Millisecond, "4m12.3s"},
-	} {
-		if got := elapsedText(tc.d); got != tc.want {
-			t.Errorf("elapsed %s: got %s want %s", tc.d, got, tc.want)
-		}
-	}
-}
-
 func TestPreflightWarnsThatOTAIsNotIncludedYet(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
@@ -153,8 +138,19 @@ func TestPreflightWarnsThatOTAIsNotIncludedYet(t *testing.T) {
 		t.Fatalf("misleading preliminary capacity log: %s", log)
 	}
 }
-func TestElapsedSubMillisecond(t *testing.T) {
-	if elapsedText(500*time.Microsecond) != "<1ms" {
-		t.Fatal("very short duration not shown")
+
+func TestElapsedText(t *testing.T) {
+	for _, tc := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{234 * time.Millisecond, "234ms"},
+		{1576 * time.Millisecond, "1.6s"},
+		{4*time.Minute + 12*time.Second + 340*time.Millisecond, "4m12.3s"},
+		{500 * time.Microsecond, "<1ms"},
+	} {
+		if got := elapsedText(tc.d); got != tc.want {
+			t.Errorf("elapsed %s: got %s want %s", tc.d, got, tc.want)
+		}
 	}
 }

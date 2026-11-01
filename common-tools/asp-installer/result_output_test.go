@@ -36,7 +36,7 @@ func TestAllCommandHumanResultsAreNotJSON(t *testing.T) {
 		{"check-vendor", func(w *bytes.Buffer) {
 			printVendorCheck(w, map[string]any{"platform": "athena", "vendor": compareResult{Matching: true}})
 		}, []string{"factory vendor comparison"}},
-		{"install", func(w *bytes.Buffer) { printInstallResult(w, installed) }, []string{"Install complete", "Fire OS 7574.1", "Amazon firmware build: PS75741-7080", "Vendor source: live", "FrankenASP revision: abc123", "Backup archive: none"}},
+		{"install", func(w *bytes.Buffer) { printInstallResult(w, installed) }, []string{"Install complete", "Fire OS 7574.1", "firmware PS75741-7080", "Vendor source: live", "FrankenASP revision: abc123"}},
 		{"update", func(w *bytes.Buffer) { printInstallResult(w, updated) }, []string{"Update complete", "Backup archive: /data/backup.tar.gz", "Previous runtime generation: saved-v3"}},
 		{"uninstall", func(w *bytes.Buffer) {
 			printMutation(w, "uninstall", map[string]any{"removed": []string{"external-asp"}, "backups_kept": true})
@@ -96,5 +96,81 @@ func TestVersionBannerAlwaysHumanAndNotJSON(t *testing.T) {
 		if json.Valid(out.Bytes()) {
 			t.Fatal("banner unexpectedly parsed as JSON")
 		}
+	}
+}
+
+func TestMutationSummariesOmitExtractionDiagnosticsAndStaleHints(t *testing.T) {
+	factory := map[string]any{
+		"platform": "rook", "firmware": "690918120", "fire_os_version": "5.5.6.9",
+		"ota_format": "ZIP_FULL_BLOCK_v3", "factory_files": 55, "factory_bytes": 9628642,
+		"cache":       map[string]any{"hit": true, "path": "/data/techo5-linux/asp-installer-cache/rook-fireos-5.5.6.9-build-690918120"},
+		"vendor_mode": "bundled",
+	}
+	for _, action := range []string{"install", "update"} {
+		t.Run(action, func(t *testing.T) {
+			current := map[string]any{"path": "/data/techo5-linux/external-asp", "release_revision": "test-revision"}
+			result := map[string]any{}
+			for k, v := range factory {
+				result[k] = v
+			}
+			result["result"] = map[string]any{
+				"action": action, "changed": true, "current": current,
+				"notice": "Turn External ASP off in TECHO5 settings before maintenance; re-enable it manually after verifying the new runtime.",
+			}
+			var out bytes.Buffer
+			printInstallResult(&out, result)
+			summary := out.String()
+			for _, essential := range []string{"FrankenASP V3", "690918120", "Fire OS 5.5.6.9", "test-revision", "bundled"} {
+				if !strings.Contains(summary, essential) {
+					t.Errorf("missing %q from %s", essential, summary)
+				}
+			}
+			for _, noise := range []string{"ZIP_FULL_BLOCK_v3", "OTA format", "Factory extraction", "Factory files extracted", "Cache directory", "Next step", "Turn External ASP off", "JSON details", "Backup archive: none"} {
+				if strings.Contains(summary, noise) {
+					t.Errorf("redundant %q in %s", noise, summary)
+				}
+			}
+		})
+	}
+	var inspection bytes.Buffer
+	printInspection(&inspection, factory)
+	for _, info := range []string{"OTA format: ZIP_FULL_BLOCK_v3", "Factory extraction:", "Cache directory:"} {
+		if !strings.Contains(inspection.String(), info) {
+			t.Errorf("inspect lost provenance detail %q: %s", info, inspection.String())
+		}
+	}
+	if strings.Contains(inspection.String(), "JSON details") {
+		t.Fatal("inspect contains copy-paste JSON hint")
+	}
+}
+
+func TestCheckSummariesShowComparisonsWithoutExtractionNoise(t *testing.T) {
+	diff := compareResult{Matching: true, Compared: 55}
+	for _, test := range []struct {
+		name string
+		fn   func(*bytes.Buffer)
+	}{
+		{"check", func(w *bytes.Buffer) {
+			printRuntimeCheck(w, map[string]any{"platform": "rook", "vendor_mode": "bundled", "comparison": diff, "update_required": false, "ota_format": "ZIP_FULL_BLOCK_v3", "factory_files": 55})
+		}},
+		{"check-vendor", func(w *bytes.Buffer) {
+			printVendorCheck(w, map[string]any{"platform": "athena", "vendor": diff, "live_vendor_usable": true, "recommendation": "live vendor may be used on Athena", "ota_format": "ZIP_FULL_BLOCK_v4"})
+		}},
+		{"uninstall", func(w *bytes.Buffer) {
+			printMutation(w, "uninstall", map[string]any{"removed": []string{"external-asp"}, "backups_kept": true, "notice": "Disable External ASP manually"})
+		}},
+		{"rollback", func(w *bytes.Buffer) {
+			printMutation(w, "rollback", map[string]any{"current": map[string]any{"path": "/external-asp", "release_revision": "test"}, "notice": "Select External ASP manually"})
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var out bytes.Buffer
+			test.fn(&out)
+			for _, noise := range []string{"OTA format:", "Factory extraction:", "JSON details:", "Next step:"} {
+				if strings.Contains(out.String(), noise) {
+					t.Errorf("unexpected %q in %s", noise, out.String())
+				}
+			}
+		})
 	}
 }

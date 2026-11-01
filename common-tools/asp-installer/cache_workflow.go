@@ -16,10 +16,11 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		if e != nil {
 			return cacheResult{}, "", nil, e
 		}
-		m.Note("Using verified firmware cache: " + result.Metadata.Firmware)
-		describeCache(m, result)
-		if _, er := archiveExisting(ctx, result); er != nil {
-			m.Note("OTA archive not available or invalid; extracted cache is verified and usable: " + er.Error())
+		// A verified extracted cache is sufficient for installation and checks.
+		// Full OTA archives are optional and should not be accessed or diagnosed
+		// when the user explicitly selected an existing factory extraction.
+		if cmd == "inspect" {
+			m.Note("Verified factory files: " + result.Metadata.Firmware)
 		}
 		return result, "", nil, nil
 	}

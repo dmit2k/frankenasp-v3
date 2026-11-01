@@ -107,9 +107,9 @@ func displayPlatform(platform string) string {
 
 func cacheFilename(meta cacheMetadata) string {
 	if osVersion := fireOSForCache(meta); osVersion != "" {
-		return meta.Platform + "-fireos-" + osVersion + "-build-" + meta.Firmware
+		return meta.Platform + "-fireos-" + osVersion + "-build-" + meta.Firmware + "-cache-v2"
 	}
-	return meta.Platform + "-" + meta.Firmware
+	return meta.Platform + "-" + meta.Firmware + "-cache-v2"
 }
 
 // Called with the existing exclusive cache lock. Legacy directories are
@@ -124,6 +124,17 @@ func migrateCacheNames(base string, m *progressMeter) error {
 			continue
 		}
 		oldPath := filepath.Join(base, entry.Name())
+		manifestBytes, er := os.ReadFile(filepath.Join(oldPath, "manifest.json"))
+		if er != nil {
+			return er
+		}
+		var manifest cacheMetadata
+		if er = json.Unmarshal(manifestBytes, &manifest); er != nil {
+			return er
+		}
+		if manifest.Schema == "ASP1-EXTRACTED-CACHE-V1" {
+			continue // Legacy cache is preserved but not eligible for v2 runtime.
+		}
 		cache, e := readCache(oldPath)
 		if e != nil {
 			return fmt.Errorf("cannot migrate invalid cache %s: %w", entry.Name(), e)

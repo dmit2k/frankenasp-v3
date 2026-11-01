@@ -19,9 +19,9 @@ import (
 )
 
 type releaseArchive struct {
-	Name, Version, Platform string
-	Original                []byte
-	Files                   map[string][]byte
+	Name, Version, Platform, CacheSchema string
+	Original                             []byte
+	Files                                map[string][]byte
 }
 
 var releaseNamePattern = regexp.MustCompile(`^frankenasp-v([0-9][A-Za-z0-9._-]*)-(athena|rook)-arm32\.tar\.gz$`)
@@ -36,9 +36,10 @@ func loadRelease(path, platform string) (releaseArchive, error) {
 	}
 	basename := filepath.Base(path)
 	matched := releaseNamePattern.FindStringSubmatch(basename)
-	if len(matched) != 3 || matched[2] != platform {
+	if len(matched) != 3 || (platform != "" && matched[2] != platform) {
 		return releaseArchive{}, errors.New("release filename does not match versioned target platform")
 	}
+	platform = matched[2]
 	original, err := os.ReadFile(path)
 	if err != nil {
 		return releaseArchive{}, err
@@ -98,8 +99,9 @@ func loadRelease(path, platform string) (releaseArchive, error) {
 		return releaseArchive{}, errors.New("release incomplete")
 	}
 	var manifest struct {
-		Schema   string `json:"schema"`
-		Platform string `json:"platform"`
+		Schema      string `json:"schema"`
+		Platform    string `json:"platform"`
+		CacheSchema string `json:"cache_schema"`
 	}
 	if err = json.Unmarshal(files["assets/manifest.json"], &manifest); err != nil {
 		return releaseArchive{}, err
@@ -118,7 +120,7 @@ func loadRelease(path, platform string) (releaseArchive, error) {
 			return releaseArchive{}, err
 		}
 	}
-	return releaseArchive{Name: basename, Version: matched[1], Platform: platform, Original: original, Files: files}, nil
+	return releaseArchive{Name: basename, Version: matched[1], Platform: platform, CacheSchema: manifest.CacheSchema, Original: original, Files: files}, nil
 }
 
 type bundleManifest struct {
@@ -128,7 +130,6 @@ type bundleManifest struct {
 	FireOS            string            `json:"fire_os_version"`
 	CacheDir          string            `json:"cache_dir"`
 	CacheSourceSHA256 string            `json:"cache_source_sha256"`
-	CacheHelperSHA256 string            `json:"cache_helper_sha256"`
 	Release           string            `json:"release"`
 	ReleaseVersion    string            `json:"release_version"`
 	ReleaseSHA256     string            `json:"release_sha256"`
@@ -151,8 +152,14 @@ func createBundle(o options) error {
 	if err != nil {
 		return err
 	}
-	cache, err := selectDesktopCache(o, hashText(rel.Files["assets/asp1-child"]))
+	if rel.CacheSchema != cacheSchema {
+		return fmt.Errorf("--asp-release archive supports cache schema %q; this extractor requires %s (rebuild the FrankenASP release with the updated asp-installer)", rel.CacheSchema, cacheSchema)
+	}
+	cache, err := selectDesktopCache(o)
 	if err != nil {
+		return err
+	}
+	if err := validateHelperRuntime(rel.Platform, rel.Files["assets/asp1-child"], cache.Items); err != nil {
 		return err
 	}
 	members, err := cacheFiles(cache)
@@ -160,7 +167,7 @@ func createBundle(o options) error {
 		return err
 	}
 	digest := sha256.Sum256(rel.Original)
-	mf := bundleManifest{Schema: "FRANKENASP-EXTRACTOR-BUNDLE-V1", Platform: o.platform, Firmware: cache.Metadata.Firmware, FireOS: fireOSForCache(cache.Metadata), CacheDir: filepath.Base(cache.Path), CacheSourceSHA256: cache.Metadata.SourceSHA256, CacheHelperSHA256: cache.Metadata.HelperSHA256, Release: rel.Name, ReleaseVersion: rel.Version, ReleaseSHA256: hex.EncodeToString(digest[:]), FilesSHA256: map[string]string{}}
+	mf := bundleManifest{Schema: "FRANKENASP-EXTRACTOR-BUNDLE-V2", Platform: o.platform, Firmware: cache.Metadata.Firmware, FireOS: fireOSForCache(cache.Metadata), CacheDir: filepath.Base(cache.Path), CacheSourceSHA256: cache.Metadata.SourceSHA256, Release: rel.Name, ReleaseVersion: rel.Version, ReleaseSHA256: hex.EncodeToString(digest[:]), FilesSHA256: map[string]string{}}
 	prefix := "asp-installer-cache/" + filepath.Base(cache.Path) + "/"
 	archiveFiles := map[string][]byte{"release/" + rel.Name: rel.Original}
 	for name, data := range members {

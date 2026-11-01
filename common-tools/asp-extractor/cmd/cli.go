@@ -67,7 +67,7 @@ func runCLI(args []string) error {
 	f.StringVar(&o.ota, "ota", "", "local full OTA ZIP")
 	f.StringVar(&o.otaURL, "ota-url", "", "explicit full OTA URL (owner-selected)")
 	f.StringVar(&o.backup, "backup-dir", "", "directory holding raw TECHO5 backup images")
-	f.StringVar(&o.release, "release", "", "original versioned FrankenASP release .tar.gz")
+	f.StringVar(&o.release, "asp-release", "", "path to local FrankenASP versioned release archive (.tar.gz), NOT a version string")
 	f.StringVar(&o.output, "output", "", "bundle output archive path")
 	f.StringVar(&o.host, "host", "", "SSH target root@hostname")
 	f.StringVar(&o.identity, "identity", "", "SSH private key (default ~/.ssh/id_ed25519 or id_rsa)")
@@ -81,8 +81,34 @@ func runCLI(args []string) error {
 	if len(f.Args()) != 0 {
 		return fmt.Errorf("unexpected arguments: %v", f.Args())
 	}
-	if cmd != "list" && o.platform == "" {
-		return errors.New("--platform is required")
+	if (cmd == "verify" || cmd == "deploy-cache") && o.platform == "" {
+		return errors.New("--platform is required for cache selection")
+	}
+	if cmd == "extract" {
+		if o.release != "" {
+			return errors.New("extract reads factory data only; omit --asp-release")
+		}
+		if o.backup != "" {
+			detected, err := detectBackupPlatform(o.backup)
+			if err != nil {
+				return err
+			}
+			if o.platform != "" && o.platform != detected {
+				return fmt.Errorf("--platform %s conflicts with backup platform %s", o.platform, detected)
+			}
+			o.platform = detected
+		} else if o.ota != "" {
+			detected, err := detectOTAPlatform(o.ota)
+			if err != nil {
+				return err
+			}
+			if o.platform != "" && o.platform != detected {
+				return fmt.Errorf("--platform %s conflicts with OTA platform %s", o.platform, detected)
+			}
+			o.platform = detected
+		} else if o.platform == "" && o.otaURL != "" {
+			return errors.New("--platform is required for --ota-url (the remote archive cannot be inspected before download)")
+		}
 	}
 	if o.platform != "" && o.platform != "athena" && o.platform != "rook" {
 		return errors.New("--platform must be athena or rook")
@@ -100,9 +126,6 @@ func runCLI(args []string) error {
 	case "list":
 		return listLocal(o)
 	case "extract":
-		if o.release == "" {
-			return errors.New("extract requires --release to identify the Bionic helper and exact dependency closure")
-		}
 		sources := 0
 		for _, s := range []string{o.ota, o.otaURL, o.backup} {
 			if s != "" {
@@ -117,7 +140,7 @@ func runCLI(args []string) error {
 		}
 		return extractSource(context.Background(), o)
 	case "verify":
-		result, err := selectDesktopCache(o, "")
+		result, err := selectDesktopCache(o)
 		if err != nil {
 			return err
 		}
@@ -125,15 +148,27 @@ func runCLI(args []string) error {
 		return nil
 	case "create-bundle":
 		if o.release == "" || o.output == "" {
-			return errors.New("create-bundle requires --release and --output")
+			return errors.New("create-bundle requires --asp-release FILE (local .tar.gz) and --output")
 		}
+		rel, err := loadRelease(o.release, o.platform)
+		if err != nil {
+			return fmt.Errorf("--asp-release: %w", err)
+		}
+		o.platform = rel.Platform
 		return createBundle(o)
 	case "deploy-cache", "deploy-asp", "deploy-all":
 		if o.host == "" {
 			return errors.New("deployment requires --host root@hostname")
 		}
 		if cmd != "deploy-cache" && o.release == "" {
-			return errors.New("deploy-asp/deploy-all require --release")
+			return errors.New("deploy-asp/deploy-all require --asp-release FILE (local .tar.gz)")
+		}
+		if o.release != "" {
+			rel, err := loadRelease(o.release, o.platform)
+			if err != nil {
+				return fmt.Errorf("--asp-release: %w", err)
+			}
+			o.platform = rel.Platform
 		}
 		return deploy(o)
 	}
@@ -145,21 +180,25 @@ func printUsage() {
 
 Usage:
   asp-extractor --version
-  asp-extractor --platform athena|rook [flags] COMMAND
+  asp-extractor [flags] COMMAND
 
 Commands: extract, list, verify, create-bundle, deploy-cache, deploy-asp, deploy-all
 
-  extract        --release ARCHIVE --ota FILE | --ota-url URL | --backup-dir DIR
+  extract        --ota FILE | --ota-url URL | --backup-dir DIR
   list           [--platform CODENAME] [--cache-dir ABS_PATH]
   verify         [--firmware VERSION_OR_CACHE]
-  create-bundle  --firmware VERSION --release ARCHIVE --output BUNDLE.tar.gz
+  create-bundle  --firmware VERSION --asp-release FILE --output BUNDLE.tar.gz
   deploy-cache   --host root@ECHO [--firmware VERSION]
-  deploy-asp     --host root@ECHO --release ARCHIVE
-  deploy-all     --host root@ECHO --release ARCHIVE [--firmware VERSION]
+  deploy-asp     --host root@ECHO --asp-release FILE
+  deploy-all     --host root@ECHO --asp-release FILE [--firmware VERSION]
 
-Common: --platform, --firmware, --cache-dir, --release,
+Common: --platform, --firmware, --cache-dir, --asp-release,
         --host, --port, --identity, --known-hosts, --output,
         --ota, --ota-url, --backup-dir, --refresh-cache
+
+For local OTA and backup extraction, platform is detected automatically.
+For --ota-url, specify --platform.
+--asp-release FILE is a local .tar.gz archive path, NOT a version number.
 
 The extractor NEVER runs the embedded installer or modifies the active ASP runtime.
 `)

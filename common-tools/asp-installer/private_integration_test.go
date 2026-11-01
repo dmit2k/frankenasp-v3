@@ -46,17 +46,12 @@ func TestPrivateFactoryClosure(t *testing.T) {
 	for _, platform := range []string{"athena", "rook"} {
 		t.Run(platform, func(t *testing.T) {
 			root := os.Getenv("ASP_TEST_" + platform + "_ROOT")
-			child := os.Getenv("ASP_TEST_" + platform + "_CHILD")
-			if root == "" || child == "" {
-				t.Skip("owner-provided private runtime/root and compiled V3 child required")
-			}
-			raw, e := os.ReadFile(child)
-			if e != nil {
-				t.Fatal(e)
+			if root == "" {
+				t.Skip("owner-provided private runtime root required")
 			}
 			sources := &otaSources{platform: platform, system: testRoot{filepath.Join(root, "system")}, vendor: testRoot{filepath.Join(root, "vendor")}}
 			c := newCollector(sources)
-			if e = c.closure(platform, raw); e != nil {
+			if e := c.closure(platform); e != nil {
 				t.Fatal(e)
 			}
 			if len(c.items) < 4 {

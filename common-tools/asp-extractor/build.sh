@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Compile existing installer extraction/cache source verbatim with the desktop
-# entrypoint. No duplicate OTA parser or changes to the embedded installer.
+# entrypoint. Both desktop and embedded commands use the same source.
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 src="$repo/common-tools/asp-installer"

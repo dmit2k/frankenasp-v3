@@ -13,13 +13,13 @@ import (
 	"testing"
 )
 
-func sampleCache(t *testing.T, root, platform, firmware, helperHash, source string) cacheResult {
+func sampleCache(t *testing.T, root, platform, firmware, source string) cacheResult {
 	t.Helper()
 	if err := ensureDesktopCache(root); err != nil {
 		t.Fatal(err)
 	}
-	meta := cacheMetadata{Platform: platform, Firmware: firmware, SourceSHA256: source, HelperSHA256: helperHash, OTAFormat: "ZIP_FULL_BLOCK_v4", FireOS: "7574.1"}
-	m, err := publishCache(root, meta, map[string][]byte{"system/bin/linker": []byte("test linker data")}, false, nil)
+	meta := cacheMetadata{Platform: platform, Firmware: firmware, SourceSHA256: source, OTAFormat: "ZIP_FULL_BLOCK_v4", FireOS: "7574.1"}
+	m, err := publishCache(root, meta, map[string][]byte{"system/bin/linker": []byte("test linker data"), "system/lib/libc.so": []byte("test libc"), "system/lib/libdl.so": []byte("test libdl"), "system/lib/libm.so": []byte("test libm")}, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,30 +27,26 @@ func sampleCache(t *testing.T, root, platform, firmware, helperHash, source stri
 }
 func TestCacheAmbiguityAndTamper(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "asp-installer-cache")
-	helper := strings.Repeat("1", 64)
-	a := sampleCache(t, root, "athena", "PS75741-7080", helper, strings.Repeat("a", 64))
-	_ = sampleCache(t, root, "athena", "PS75741-7080", helper, strings.Repeat("b", 64))
+	a := sampleCache(t, root, "athena", "PS75741-7080", strings.Repeat("a", 64))
+	_ = sampleCache(t, root, "athena", "PS75741-7080", strings.Repeat("b", 64))
 	opts := options{cacheDir: root, platform: "athena"}
-	if _, err := selectDesktopCache(opts, helper); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+	if _, err := selectDesktopCache(opts); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("expected ambiguity: %v", err)
 	}
 	opts.firmware = filepath.Base(a.Path)
-	selected, err := selectDesktopCache(opts, helper)
+	selected, err := selectDesktopCache(opts)
 	if err != nil || selected.Path != a.Path {
 		t.Fatalf("specific cache %v %v", selected.Path, err)
-	}
-	if _, err = selectDesktopCache(opts, strings.Repeat("3", 64)); err == nil {
-		t.Fatal("helper mismatch accepted")
 	}
 	if err = os.WriteFile(filepath.Join(a.Path, "files/system/bin/linker"), []byte("tampered"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = selectDesktopCache(opts, helper); err == nil {
+	if _, err = selectDesktopCache(opts); err == nil {
 		t.Fatal("tampered cache accepted")
 	}
 }
 func TestRemotePathGuard(t *testing.T) {
-	ok := []string{echoInstaller, echoCache + "/athena-fireos-7574.1-build-PS75741-7080/files/system/bin/linker"}
+	ok := []string{echoInstaller, echoCache + "/athena-fireos-7574.1-build-PS75741-7080-cache-v2/files/system/bin/linker"}
 	for _, p := range ok {
 		if err := remoteSafePath(p); err != nil {
 			t.Errorf("valid path %s rejected: %v", p, err)
@@ -70,7 +66,7 @@ func TestRemotePathGuard(t *testing.T) {
 func TestCLIValidation(t *testing.T) {
 	cases := [][]string{
 		{"extract", "--platform", "athena", "--ota", "/tmp/fake"},
-		{"extract", "--platform", "athena", "--release", "x"},
+		{"extract", "--platform", "athena", "--asp-release", "x", "--ota", "/tmp/fake"},
 		{"verify", "--platform", "wrong"},
 		{"deploy-asp", "--platform", "athena", "--host", "root@x"},
 		{"deploy-cache", "--platform", "athena"},
@@ -111,7 +107,7 @@ func TestBundlePreservesOriginalRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), "asp-installer-cache")
-	cached := sampleCache(t, root, "athena", "PS75741-7080", hashText(rel.Files["assets/asp1-child"]), strings.Repeat("a", 64))
+	cached := sampleCache(t, root, "athena", "PS75741-7080", strings.Repeat("a", 64))
 	out := filepath.Join(t.TempDir(), "bundle.tar.gz")
 	opt := options{platform: "athena", cacheDir: root, firmware: filepath.Base(cached.Path), release: releasePath, output: out}
 	if err = createBundle(opt); err != nil {
@@ -184,7 +180,7 @@ func TestBackupSourceIndex(t *testing.T) {
 	if err := ensureDesktopCache(o.cacheDir); err != nil {
 		t.Fatal(err)
 	}
-	sample := cacheResult{Metadata: cacheMetadata{Firmware: "690918120", SourceSHA256: strings.Repeat("b", 64)}, Path: filepath.Join(o.cacheDir, "rook-fireos-5.5.6.9-build-690918120")}
+	sample := cacheResult{Metadata: cacheMetadata{Firmware: "690918120", SourceSHA256: strings.Repeat("b", 64)}, Path: filepath.Join(o.cacheDir, "rook-fireos-5.5.6.9-build-690918120-cache-v2")}
 	if err := recordBackupLink(o, sample); err != nil {
 		t.Fatal(err)
 	}
@@ -201,5 +197,24 @@ func TestBackupSourceIndex(t *testing.T) {
 	st, err := os.Stat(backupIndexPath(o.cacheDir))
 	if err != nil || st.Mode().Perm() != 0600 {
 		t.Fatalf("unsafe backup-index mode: %v %v", st, err)
+	}
+}
+
+func TestHelperDependenciesCheckedAfterExtraction(t *testing.T) {
+	path := os.Getenv("FRANKENASP_TEST_ATHENA_RELEASE")
+	if path == "" {
+		t.Skip("real release required")
+	}
+	rel, err := loadRelease(path, "athena")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets := map[string][]byte{"system/bin/linker": []byte("linker"), "system/lib/libc.so": []byte("libc")}
+	if err := validateHelperRuntime("athena", rel.Files["assets/asp1-child"], assets); err == nil {
+		t.Fatal("missing helper dependency accepted")
+	}
+	assets["system/lib/libdl.so"] = []byte("libdl")
+	if err := validateHelperRuntime("athena", rel.Files["assets/asp1-child"], assets); err != nil {
+		t.Fatalf("expected linkable helper: %v", err)
 	}
 }

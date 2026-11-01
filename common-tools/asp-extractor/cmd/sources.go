@@ -23,7 +23,7 @@ func ensureDesktopCache(path string) error {
 
 // A selected cache is always revalidated by the embedded installer's
 // unmodified manifest/inventory verifier.
-func selectDesktopCache(o options, helperSHA string) (cacheResult, error) {
+func selectDesktopCache(o options) (cacheResult, error) {
 	entries, err := os.ReadDir(o.cacheDir)
 	if err != nil {
 		return cacheResult{}, err
@@ -42,14 +42,14 @@ func selectDesktopCache(o options, helperSHA string) (cacheResult, error) {
 		if err = json.Unmarshal(raw, &meta); err != nil {
 			return cacheResult{}, err
 		}
+		if meta.Schema == "ASP1-EXTRACTED-CACHE-V1" {
+			continue // Never use legacy helper-bound cache for a new bundle.
+		}
 		if meta.Platform != o.platform {
 			return cacheResult{}, fmt.Errorf("manifest platform mismatch: %s", path)
 		}
 		if o.firmware != "" && o.firmware != entry.Name() && o.firmware != meta.Firmware && o.firmware != fireOSForCache(meta) {
 			continue
-		}
-		if helperSHA != "" && meta.HelperSHA256 != helperSHA {
-			continue // Another installer-helper revision is not a candidate.
 		}
 		result, err := readCache(path)
 		if err != nil {
@@ -90,11 +90,18 @@ func listLocal(o options) error {
 		path := filepath.Join(o.cacheDir, entry.Name())
 		result, err := readCache(path)
 		if err != nil {
+			if raw, readErr := os.ReadFile(filepath.Join(path, "manifest.json")); readErr == nil {
+				var legacy cacheMetadata
+				if json.Unmarshal(raw, &legacy) == nil && legacy.Schema == "ASP1-EXTRACTED-CACHE-V1" {
+					fmt.Printf("LEGACY %s: V1 helper-bound cache (preserved, re-extract for V2)\n", entry.Name())
+					continue
+				}
+			}
 			fmt.Printf("INVALID %s: %v\n", entry.Name(), err)
 			continue
 		}
 		m := result.Metadata
-		fmt.Printf("CACHE %s: platform=%s firmware=%s fireos=%s files=%d bytes=%d helper=%s\n", entry.Name(), m.Platform, m.Firmware, fireOSForCache(m), m.Files, m.Bytes, m.HelperSHA256[:12])
+		fmt.Printf("CACHE %s: platform=%s firmware=%s fireos=%s files=%d bytes=%d schema=%s\n", entry.Name(), m.Platform, m.Firmware, fireOSForCache(m), m.Files, m.Bytes, m.Schema)
 		count++
 	}
 	if count == 0 {
@@ -114,15 +121,10 @@ func extractSource(ctx context.Context, o options) error {
 	if err := ensureDesktopCache(o.cacheDir); err != nil {
 		return err
 	}
-	release, err := loadRelease(o.release, o.platform)
-	if err != nil {
-		return err
-	}
-	child := release.Files["assets/asp1-child"]
 	meter := newMeter()
 	defer meter.Close()
 	if o.backup != "" {
-		result, err := extractBackup(ctx, o, child, meter)
+		result, err := extractBackup(ctx, o, meter)
 		if err != nil {
 			return err
 		}
@@ -137,7 +139,7 @@ func extractSource(ctx context.Context, o options) error {
 	if err != nil {
 		return err
 	}
-	result, downloaded, cleanup, err := loadExtracted(ctx, o.cacheDir, o.platform, o.ota, o.otaURL, "", searchDir, "inspect", child, false, o.refresh, false, meter)
+	result, downloaded, cleanup, err := loadExtracted(ctx, o.cacheDir, o.platform, o.ota, o.otaURL, "", searchDir, "inspect", false, o.refresh, false, meter)
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -235,7 +237,7 @@ func property(buildprop, key string) string {
 	}
 	return ""
 }
-func extractBackup(ctx context.Context, o options, child []byte, meter *progressMeter) (cacheResult, error) {
+func extractBackup(ctx context.Context, o options, meter *progressMeter) (cacheResult, error) {
 	info, err := os.Stat(o.backup)
 	if err != nil {
 		return cacheResult{}, err
@@ -258,6 +260,13 @@ func extractBackup(ctx context.Context, o options, child []byte, meter *progress
 		return cacheResult{}, fmt.Errorf("cannot read backup build.prop: %w", err)
 	}
 	text := string(bp)
+	// A familiar partition layout alone must not override contradictory device metadata.
+	identity := property(text, "ro.build.fingerprint")
+	if identity != "" {
+		if strings.Contains(identity, "/athena/") && o.platform != "athena" || strings.Contains(identity, "/rook/") && o.platform != "rook" {
+			return cacheResult{}, fmt.Errorf("backup build fingerprint conflicts with detected %s platform: %s", o.platform, identity)
+		}
+	}
 	firmware := firmwareLabel(property(text, "ro.build.fingerprint"), property(text, "ro.build.version.incremental"))
 	if o.firmware != "" {
 		if firmware != "unknown" && firmware != o.firmware {
@@ -265,17 +274,19 @@ func extractBackup(ctx context.Context, o options, child []byte, meter *progress
 		}
 		firmware = o.firmware
 	}
-	if firmware == "unknown" || firmware == "" {
-		return cacheResult{}, errors.New("backup firmware not identified; supply --firmware")
-	}
+	// Firmware labels are best-effort provenance metadata, never a prerequisite
+	// for extracting factory files from an owner-provided backup.
 	meter.Phase("Hashing original backup partition pair for cache identity")
 	sourceSHA, err := backupIdentity(ctx, o.backup, o.platform)
 	if err != nil {
 		return cacheResult{}, err
 	}
-	helperSHA := hashText(child)
+	if firmware == "unknown" || firmware == "" {
+		firmware = "unknown-" + sourceSHA[:12]
+		meter.Note("Backup firmware version unavailable; using source digest as stable identity")
+	}
 	if !o.refresh {
-		existing, err := findCache(o.cacheDir, o.platform, helperSHA, sourceSHA, "")
+		existing, err := findCache(o.cacheDir, o.platform, sourceSHA, "")
 		if err == nil {
 			meter.Note("Verified backup cache reused; no ext4 rescan")
 			return existing, nil
@@ -286,14 +297,14 @@ func extractBackup(ctx context.Context, o options, child []byte, meter *progress
 	}
 	meter.Phase("Collecting factory ELF dependency closure")
 	collected := newCollector(src)
-	if err = collected.closure(o.platform, child); err != nil {
+	if err = collected.closure(o.platform); err != nil {
 		return cacheResult{}, err
 	}
 	if err = ctx.Err(); err != nil {
 		return cacheResult{}, err
 	}
 	fireos := knownFireOS(o.platform, firmware)
-	meta := cacheMetadata{Platform: o.platform, Firmware: firmware, FireOS: fireos, SourceSHA256: sourceSHA, HelperSHA256: helperSHA, OTAFormat: src.kind, DependencyEdges: collected.edgeCount}
+	meta := cacheMetadata{Platform: o.platform, Firmware: firmware, FireOS: fireos, SourceSHA256: sourceSHA, OTAFormat: src.kind, DependencyEdges: collected.edgeCount}
 	return publishCache(o.cacheDir, meta, collected.items, o.refresh, meter)
 }
 func cacheFiles(result cacheResult) (map[string][]byte, error) {

@@ -26,9 +26,8 @@ linked (`CGO_ENABLED=0`); no Go, glibc, SSH/SCP, mount or image utilities
 are needed at runtime. Untagged builds include the UTC suffix defined in
 `docs/RELEASING.md`. **No new GitHub Release is implied by building.**
 
-The original `asp-installer` is a `package main`. To preserve its working
-ABI, functions and cache format **without changing it**, the build script
-copies its Go source files *verbatim* (excluding its CLI entrypoint and tests)
+The original `asp-installer` is a `package main`. To reuse its source rather
+than duplicate the parsers, the build script copies its Go source files *verbatim* (excluding its CLI entrypoint and tests)
 into a disposable build directory, together with the desktop CLI and OS
 adapter. No parser source is duplicated in Git; there is one compiled copy
 per binary. The embedded installer remains independently buildable using
@@ -45,7 +44,7 @@ The cache has the embedded installer's exact structure:
 `<platform>-<firmware>/manifest.json`, `SHA256SUMS`, `files/`,
 plus optional archived original OTA files in `ota-images/`. It supports
 multiple platform/firmware variants without replacing unrelated caches.
-Re-extraction of a cache matching the supplied OTA and release helper is
+Re-extraction of a cache matching the supplied OTA is
 skipped; all reused cache files are SHA-256 checked. Owner-selected backup
 directory paths are indexed separately in the desktop-only
 `asp-extractor-backups.json` next to the cache root, never inside a firmware
@@ -56,39 +55,47 @@ present. This index stores only local paths and references, not backup bytes.
 
 ```sh
 E=./dist/asp-extractor-v<version>-linux-amd64
-ATHENA=frankenasp-v3.2-athena-arm32.tar.gz
-ROOK=frankenasp-v3.2-rook-arm32.tar.gz
+ATHENA=/path/to/frankenasp-v<VERSION>-athena-arm32.tar.gz
+ROOK=/path/to/frankenasp-v<VERSION>-rook-arm32.tar.gz
 
-# Extract from a full OTA ZIP using the selected release's real ARM32 helper.
-"$E" --platform athena extract --ota update-kindle-athena-7080.bin --release "$ATHENA"
-"$E" --platform rook extract --ota update-kindle-rook.bin --release "$ROOK"
+# Extract factory ASP from a full local OTA; platform detected automatically.
+"$E" extract --ota update-kindle-athena-7080.bin
+"$E" extract --ota update-kindle-rook.bin
 
-# Or from a directory with real TECHO5 raw ext4 backup partition images.
-"$E" --platform athena extract --backup-dir /backup/athena/partitions --release "$ATHENA"
-"$E" --platform rook extract --backup-dir /backup/rook --release "$ROOK"
+# Or from TECHO5 raw ext4 backup partition images, even in a serial-number folder.
+"$E" extract --backup-dir /backups/G070RQ13843305B5
+"$E" extract --backup-dir /backup/athena/partitions
 
 "$E" list
-"$E" --platform athena verify --firmware athena-fireos-7574.1-build-PS75741-7080
+"$E" --platform athena verify --firmware athena-fireos-7574.1-build-PS75741-7080-cache-v2
 
-"$E" --platform athena create-bundle \
-  --firmware athena-fireos-7574.1-build-PS75741-7080 \
-  --release "$ATHENA" --output ./athena-private-bundle.tar.gz
+"$E" create-bundle \
+  --firmware athena-fireos-7574.1-build-PS75741-7080-cache-v2 \
+  --asp-release "$ATHENA" --output ./athena-private-bundle.tar.gz
 
 # SSH host keys MUST already be pinned in ~/.ssh/known_hosts.
-"$E" --platform athena deploy-cache --host root@10.0.0.2 --firmware athena-fireos-7574.1-build-PS75741-7080
-"$E" --platform athena deploy-asp --host root@10.0.0.2 --release "$ATHENA"
-"$E" --platform athena deploy-all --host root@10.0.0.2 \
-  --firmware athena-fireos-7574.1-build-PS75741-7080 --release "$ATHENA"
+"$E" --platform athena deploy-cache --host root@10.0.0.2 --firmware athena-fireos-7574.1-build-PS75741-7080-cache-v2
+"$E" deploy-asp --host root@10.0.0.2 --asp-release "$ATHENA"
+"$E" deploy-all --host root@10.0.0.2 \
+  --firmware athena-fireos-7574.1-build-PS75741-7080-cache-v2 --asp-release "$ATHENA"
 ```
 
 Flags for SSH: `--identity PATH` (default: an unencrypted user SSH private
 key), `--known-hosts PATH` (default: `~/.ssh/known_hosts`), `--port PORT`
 (default 22). No insecure host-key fallback is provided.
 
-`--platform` is mandatory except for `list`. `--firmware` is optional
-only when the selection is unambiguous. If multiple variants have the same
-firmware, use the **exact cache directory name**. `--release` is mandatory
-for extraction because the real Bionic child determines dependency closure.
+`extract` automatically determines the model from raw backup partition layout
+or a local full OTA's build fingerprint and partition structure; `--platform`
+is optional and must agree with the detected model. For `--ota-url`, specify
+`--platform` (the remote file cannot be examined before download).
+`verify` and `deploy-cache` require `--platform`. For operations using a
+FrankenASP release, supply `--asp-release FILE`, which is a path to a
+versioned local `.tar.gz` archive, **not** a version number; its embedded
+manifest determines the platform. `--firmware` is optional when the selected
+cache is unambiguous; otherwise use the **exact cache directory name**.
+Factory caches use `ASP1-EXTRACTED-CACHE-V2`, independent of the helper.
+Existing V1 caches are preserved but are not selected as V2 caches; repeat
+`extract` from the original local OTA or backup to produce a V2 cache.
 
 ### Backup layouts
 
@@ -110,7 +117,11 @@ or prefer a locally authenticated OTA.
 
 ### Bundle
 
-A private bundle contains one verified cache, a JSON manifest with platform,
+A private bundle requires a FrankenASP release declaring the new cache format
+`ASP1-EXTRACTED-CACHE-V2` in its assets manifest. Existing v3.2 releases
+do not qualify. `deploy-asp` and `deploy-all` enforce the same requirement.
+
+A private bundle (`FRANKENASP-EXTRACTOR-BUNDLE-V2`) contains one verified cache, a JSON manifest with platform,
 firmware, release version and SHA-256 inventory, and the **unchanged original**
 versioned FrankenASP release archive. It contains no full OTA by default.
 The output path is no-clobber. **Bundles contain proprietary Amazon

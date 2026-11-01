@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 )
 
-func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceURL, firmware, otaSearchDir, cmd string, child []byte, noBackup, refresh, deleteOTA bool, m *progressMeter) (cacheResult, string, func(), error) {
+func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceURL, firmware, otaSearchDir, cmd string, noBackup, refresh, deleteOTA bool, m *progressMeter) (cacheResult, string, func(), error) {
 	if sourcePath == "" && sourceURL == "" {
-		result, e := selectFirmwareCache(cacheDir, platform, hashText(child), firmware)
+		result, e := selectFirmwareCache(cacheDir, platform, firmware)
 		if e != nil {
 			return cacheResult{}, "", nil, e
 		}
@@ -25,7 +25,6 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	}
 	urlHash := ""
 	sourceHash := ""
-	helperHash := hashText(child)
 	if sourceURL != "" {
 		urlHash = hashString(sourceURL)
 	} else {
@@ -37,7 +36,7 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		sourceHash = digest
 	}
 	if !refresh {
-		cached, e := findCache(cacheDir, platform, helperHash, sourceHash, urlHash)
+		cached, e := findCache(cacheDir, platform, sourceHash, urlHash)
 		if e == nil {
 			m.Note("Verified extracted OTA cache reused; no download or partition scan necessary")
 			describeCache(m, cached)
@@ -51,7 +50,7 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		}
 	}
 	if sourceURL != "" && !refresh {
-		fromArchive, err := cacheForURLFilename(ctx, cacheDir, platform, helperHash, sourceURL)
+		fromArchive, err := cacheForURLFilename(ctx, cacheDir, platform, sourceURL)
 		if err == nil {
 			m.Note("Reusing archived OTA with matching source filename and verified SHA-256; no network request")
 			describeCache(m, fromArchive)
@@ -63,7 +62,7 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	}
 	if sourceURL != "" && !refresh {
 		m.Phase("Looking for already-downloaded OTA matching the extracted cache")
-		cached, localPath, err := cachedLocalOTAForURL(ctx, cacheDir, otaSearchDir, platform, helperHash, sourceURL, m)
+		cached, localPath, err := cachedLocalOTAForURL(ctx, cacheDir, otaSearchDir, platform, sourceURL, m)
 		if err == nil {
 			archiveLocalIfPossible(ctx, cached, localPath, m)
 			return cached, "", nil, nil
@@ -123,7 +122,7 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		}
 		// A different URL can deliver bytes already present in another verified cache.
 		if !refresh {
-			found, er := findCache(cacheDir, platform, helperHash, sourceHash, "")
+			found, er := findCache(cacheDir, platform, sourceHash, "")
 			if er == nil {
 				m.Note("Downloaded OTA content matches an existing verified cache")
 				describeCache(m, found)
@@ -156,7 +155,7 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		m.Note("Scans fetch multiple files; cache will skip all scans on later commands")
 	}
 	collected := newCollector(src)
-	if e = collected.closure(platform, child); e != nil {
+	if e = collected.closure(platform); e != nil {
 		return cacheResult{}, source, cleanup, fmt.Errorf("factory dependency closure: %w", e)
 	}
 	if e = ctx.Err(); e != nil {
@@ -177,14 +176,14 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	if version == "" {
 		version = knownFireOS(platform, src.firmware)
 	}
-	meta := cacheMetadata{Platform: platform, Firmware: src.firmware, FireOS: version, SourceSHA256: sourceHash, HelperSHA256: helperHash, URLSHA256: urlHash, OriginalOTAName: originalName, OTAFormat: src.kind, DependencyEdges: collected.edgeCount}
+	meta := cacheMetadata{Platform: platform, Firmware: src.firmware, FireOS: version, SourceSHA256: sourceHash, URLSHA256: urlHash, OriginalOTAName: originalName, OTAFormat: src.kind, DependencyEdges: collected.edgeCount}
 	m.Phase("Writing extracted artifact cache with SHA-256 inventory")
 	saved, e := publishCache(cacheDir, meta, collected.items, refresh, m)
 	if e != nil {
 		// In case a concurrent independently-created cache is already present,
 		// use it only after full hash verification.
 		if errors.Is(e, os.ErrExist) && !refresh {
-			existing, er := findCache(cacheDir, platform, helperHash, sourceHash, "")
+			existing, er := findCache(cacheDir, platform, sourceHash, "")
 			if er == nil {
 				if sourceURL == "" {
 					archiveLocalIfPossible(ctx, existing, source, m)

@@ -28,7 +28,7 @@ cp "$launcher" "$pkg/assets/external-asp"
 cp "$child" "$pkg/assets/asp1-child"
 cp "$git_root/LICENSE" "$pkg/LICENSE"
 if [[ "$platform" == athena ]]; then cp "$map" "$pkg/assets/channel-map"; fi
-printf '{"schema":"ASP1-ASSETS-V3","platform":"%s"}\n' "$platform" > "$pkg/assets/manifest.json"
+printf '{"schema":"ASP1-ASSETS-V3","platform":"%s","cache_schema":"ASP1-EXTRACTED-CACHE-V2"}\n' "$platform" > "$pkg/assets/manifest.json"
 chmod 0500 "$pkg/asp-installer" "$pkg/assets/external-asp" "$pkg/assets/asp1-child"
 chmod 0600 "$pkg/assets/manifest.json"
 if [[ "$platform" == athena ]]; then chmod 0600 "$pkg/assets/channel-map"; fi

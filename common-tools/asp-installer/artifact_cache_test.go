@@ -18,8 +18,7 @@ func fixtureCache(t *testing.T) (string, cacheResult) {
 		t.Fatal(e)
 	}
 	h := hashString("fake OTA contents")
-	helper := hashString("fake helper")
-	meta := cacheMetadata{Platform: "athena", Firmware: "PS75741-7080", SourceSHA256: h, HelperSHA256: helper, URLSHA256: hashString("https://example.invalid/ota.bin"), OTAFormat: "ZIP_FULL_BLOCK_v4", DependencyEdges: 27}
+	meta := cacheMetadata{Platform: "athena", Firmware: "PS75741-7080", SourceSHA256: h, URLSHA256: hashString("https://example.invalid/ota.bin"), OTAFormat: "ZIP_FULL_BLOCK_v4", DependencyEdges: 27}
 	items := map[string][]byte{"system/bin/linker": []byte("fake-linker"), "vendor/lib/libasp.so": []byte("fake-asp"), "system/build.prop": []byte("fake-build")}
 	saved, e := publishCache(base, meta, items, false, nil)
 	if e != nil {
@@ -40,19 +39,16 @@ func TestCachePublishAndVerifiedHits(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	byOTA, e := findCache(base, "athena", saved.Metadata.HelperSHA256, saved.Metadata.SourceSHA256, "")
+	byOTA, e := findCache(base, "athena", saved.Metadata.SourceSHA256, "")
 	if e != nil || !byOTA.Hit || len(byOTA.Items) != 3 {
 		t.Fatalf("local OTA lookup: %+v %v", byOTA.Metadata, e)
 	}
-	byURL, e := findCache(base, "athena", saved.Metadata.HelperSHA256, "", saved.Metadata.URLSHA256)
+	byURL, e := findCache(base, "athena", "", saved.Metadata.URLSHA256)
 	if e != nil || !byURL.Hit {
 		t.Fatalf("URL lookup: %v", e)
 	}
-	if _, e = findCache(base, "rook", saved.Metadata.HelperSHA256, "", saved.Metadata.URLSHA256); !errors.Is(e, os.ErrNotExist) {
+	if _, e = findCache(base, "rook", "", saved.Metadata.URLSHA256); !errors.Is(e, os.ErrNotExist) {
 		t.Fatalf("wrong platform matched: %v", e)
-	}
-	if _, e = findCache(base, "athena", hashString("different helper"), "", ""); !errors.Is(e, os.ErrNotExist) {
-		t.Fatalf("wrong helper matched: %v", e)
 	}
 }
 func TestCacheDetectsModifiedMissingAndExtraFiles(t *testing.T) {
@@ -85,7 +81,7 @@ func TestCacheDetectsModifiedMissingAndExtraFiles(t *testing.T) {
 					t.Fatal(e)
 				}
 			}
-			_, e := findCache(base, "athena", saved.Metadata.HelperSHA256, saved.Metadata.SourceSHA256, "")
+			_, e := findCache(base, "athena", saved.Metadata.SourceSHA256, "")
 			if change == "bad-manifest" {
 				// Malformed metadata cannot masquerade as a matching cache.
 				if e == nil {
@@ -124,7 +120,7 @@ func TestCachedSourceSkipsExtractionAndDownload(t *testing.T) {
 	base, saved := fixtureCache(t)
 	var output bytes.Buffer
 	meter := &progressMeter{out: &output, done: make(chan struct{})}
-	result, downloaded, cleanup, e := loadExtracted(context.Background(), base, "athena", "", "https://example.invalid/ota.bin", "", t.TempDir(), "check-vendor", []byte("fake helper"), false, false, false, meter)
+	result, downloaded, cleanup, e := loadExtracted(context.Background(), base, "athena", "", "https://example.invalid/ota.bin", "", t.TempDir(), "check-vendor", false, false, false, meter)
 	meter.Close()
 	if e != nil || !result.Hit || downloaded != "" || cleanup != nil {
 		t.Fatalf("cache failed to skip network: %v %v", result.Hit, e)
@@ -171,7 +167,7 @@ func TestCacheLockHonorsCancellation(t *testing.T) {
 
 func TestReadableFirmwareCacheNamesAndNumberedVariants(t *testing.T) {
 	base, first := fixtureCache(t)
-	if actual := filepath.Base(first.Path); actual != "athena-fireos-7574.1-build-PS75741-7080" {
+	if actual := filepath.Base(first.Path); actual != "athena-fireos-7574.1-build-PS75741-7080-cache-v2" {
 		t.Fatalf("unreadable cache directory: %q", actual)
 	}
 	alt := first.Metadata
@@ -181,13 +177,13 @@ func TestReadableFirmwareCacheNamesAndNumberedVariants(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if actual := filepath.Base(second.Path); actual != "athena-fireos-7574.1-build-PS75741-7080-variant-2" {
+	if actual := filepath.Base(second.Path); actual != "athena-fireos-7574.1-build-PS75741-7080-cache-v2-variant-2" {
 		t.Fatalf("unexpected variant name: %q", actual)
 	}
 	if _, e := os.Stat(first.Path); e != nil {
 		t.Fatalf("original variant lost: %v", e)
 	}
-	chosen, e := findCache(base, "athena", alt.HelperSHA256, alt.SourceSHA256, "")
+	chosen, e := findCache(base, "athena", alt.SourceSHA256, "")
 	if e != nil || chosen.Path != second.Path {
 		t.Fatalf("variant lookup failed: %+v %v", chosen, e)
 	}

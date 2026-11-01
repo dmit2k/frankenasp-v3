@@ -249,7 +249,7 @@ func (c *collector) existMany(paths []string) (map[string]bool, error) {
 	})
 	return result, err
 }
-func (c *collector) closure(platform string, child []byte) error {
+func (c *collector) closure(platform string) error {
 	configFiles, e := c.fileList("vendor/etc/audio-algorithms")
 	if e != nil {
 		return e
@@ -284,24 +284,22 @@ func (c *collector) closure(platform string, child []byte) error {
 		aspirant = "vendor/lib/libasp.so"
 		priorities = []string{"vendor/lib", "system/lib/vndk-28", "system/lib/vndk-sp-28", "system/lib"}
 	}
-	queue := []runtimeFile{{"factory/asp1-child", child}, {aspirant, c.items[aspirant]}}
+	queue := []runtimeFile{{aspirant, c.items[aspirant]}}
 	visited := map[string]bool{}
 	var bytesTotal uint64
 	for len(queue) > 0 {
 		missingNames := []string{}
-		var needFrom []string
 		for _, node := range queue {
 			if visited[node.path] {
 				continue
 			}
 			visited[node.path] = true
 			bytesTotal += uint64(len(node.data))
-			libs, e := elfNeeded(node.data, node.path != "factory/asp1-child", map[bool]string{true: "/system/bin/linker", false: ""}[node.path == "factory/asp1-child"])
+			libs, e := elfNeeded(node.data, true, "")
 			if e != nil {
 				return fmt.Errorf("%s: %w", node.path, e)
 			}
 			for _, name := range libs {
-				needFrom = append(needFrom, node.path)
 				missingNames = append(missingNames, name)
 			}
 		}
@@ -345,11 +343,40 @@ func (c *collector) closure(platform string, child []byte) error {
 		if e := c.readMany(all); e != nil {
 			return e
 		}
-		for i, name := range missingNames {
+		for _, name := range missingNames {
 			p := selected[name]
 			queue = append(queue, runtimeFile{p, c.items[p]})
 			c.edgeCount++
-			_ = needFrom[i]
+		}
+	}
+	return nil
+}
+
+// validateHelperRuntime checks the selected helper against an already extracted
+// factory runtime. It never expands the factory dependency closure and is not
+// part of extraction or cache identity.
+func validateHelperRuntime(platform string, child []byte, items map[string][]byte) error {
+	libs, err := elfNeeded(child, false, "/system/bin/linker")
+	if err != nil {
+		return fmt.Errorf("helper ELF: %w", err)
+	}
+	priorities := []string{"system/lib", "vendor/lib"}
+	if platform == "athena" {
+		priorities = []string{"vendor/lib", "system/lib/vndk-28", "system/lib/vndk-sp-28", "system/lib"}
+	}
+	if len(items["system/bin/linker"]) == 0 {
+		return errors.New("helper loader /system/bin/linker absent from factory cache")
+	}
+	for _, name := range libs {
+		found := false
+		for _, dir := range priorities {
+			if len(items[dir+"/"+name]) != 0 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("helper requires %s, absent from factory cache", name)
 		}
 	}
 	return nil

@@ -244,7 +244,7 @@ func (r *remote) getSmallFile(file string, maxBytes int64) ([]byte, error) {
 func compatibleCacheMetadata(a, b cacheMetadata) bool {
 	// Archive retrieval path, URL and creation timestamp are not factory content.
 	return a.Schema == b.Schema && a.Platform == b.Platform && a.Firmware == b.Firmware &&
-		a.FireOS == b.FireOS && a.SourceSHA256 == b.SourceSHA256 && a.HelperSHA256 == b.HelperSHA256 &&
+		a.FireOS == b.FireOS && a.SourceSHA256 == b.SourceSHA256 &&
 		a.OTAFormat == b.OTAFormat && a.Files == b.Files && a.Bytes == b.Bytes && a.DependencyEdges == b.DependencyEdges
 }
 func deployCache(r *remote, cache cacheResult) error {
@@ -343,15 +343,13 @@ func deploy(o options) error {
 	var rel releaseArchive
 	var err error
 	if o.command != "deploy-asp" {
-		helperSHA := ""
 		if o.release != "" {
 			rel, err = loadRelease(o.release, o.platform)
 			if err != nil {
 				return err
 			}
-			helperSHA = hashText(rel.Files["assets/asp1-child"])
 		}
-		cache, err = selectDesktopCache(o, helperSHA)
+		cache, err = selectDesktopCache(o)
 		if err != nil {
 			return err
 		}
@@ -359,6 +357,14 @@ func deploy(o options) error {
 	if o.command != "deploy-cache" && len(rel.Original) == 0 {
 		rel, err = loadRelease(o.release, o.platform)
 		if err != nil {
+			return err
+		}
+	}
+	if o.command != "deploy-cache" && rel.CacheSchema != cacheSchema {
+		return fmt.Errorf("--asp-release archive does not declare %s; use a release built with the new helper-independent installer", cacheSchema)
+	}
+	if o.command == "deploy-all" {
+		if err := validateHelperRuntime(rel.Platform, rel.Files["assets/asp1-child"], cache.Items); err != nil {
 			return err
 		}
 	}

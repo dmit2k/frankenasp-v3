@@ -10,11 +10,11 @@ import (
 	"strings"
 )
 
-// Select only an extracted cache fully matching the release's platform/helper.
+// Select only a verified platform-specific factory cache (helper-independent).
 // An unspecified version is safe only when exactly one candidate exists.
 // --firmware accepts either firmware label or a specific cache directory name,
 // allowing a user to disambiguate numbered firmware variants.
-func selectFirmwareCache(base, platform, helperHash, requested string) (cacheResult, error) {
+func selectFirmwareCache(base, platform, requested string) (cacheResult, error) {
 	entries, e := os.ReadDir(base)
 	if e != nil {
 		return cacheResult{}, e
@@ -34,7 +34,7 @@ func selectFirmwareCache(base, platform, helperHash, requested string) (cacheRes
 		if json.Unmarshal(raw, &meta) != nil || meta.Schema != cacheSchema {
 			continue
 		}
-		if meta.Platform != platform || meta.HelperSHA256 != helperHash {
+		if meta.Platform != platform {
 			continue
 		}
 		if requested != "" && requested != meta.Firmware && requested != fireOSForCache(meta) && requested != name {
@@ -48,9 +48,9 @@ func selectFirmwareCache(base, platform, helperHash, requested string) (cacheRes
 	}
 	if len(candidates) == 0 {
 		if requested != "" {
-			return cacheResult{}, fmt.Errorf("no verified cache for firmware %q on %s with current helper; use inspect --ota or --ota-url", requested, platform)
+			return cacheResult{}, fmt.Errorf("no verified cache for firmware %q on %s; use inspect --ota or --ota-url", requested, platform)
 		}
-		return cacheResult{}, errors.New("no verified extracted cache for this platform/helper; supply --ota or --ota-url")
+		return cacheResult{}, errors.New("no verified extracted cache for this platform; supply --ota or --ota-url")
 	}
 	if len(candidates) > 1 {
 		names := make([]string, len(candidates))

@@ -82,7 +82,7 @@ func hashLocalCandidate(ctx context.Context, filename string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func cachedLocalOTAForURL(ctx context.Context, cacheDir, otaSearchDir, platform, helperHash, rawURL string, m *progressMeter) (cacheResult, string, error) {
+func cachedLocalOTAForURL(ctx context.Context, cacheDir, otaSearchDir, platform, rawURL string, m *progressMeter) (cacheResult, string, error) {
 	u, e := url.Parse(rawURL)
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return cacheResult{}, "", errors.New("OTA URL must be HTTP(S)")
@@ -120,7 +120,7 @@ func cachedLocalOTAForURL(ctx context.Context, cacheDir, otaSearchDir, platform,
 			m.Note(fmt.Sprintf("Skipping unsafe/unreadable local OTA candidate %s: %v", filename, err))
 			continue
 		}
-		result, err := findCache(cacheDir, platform, helperHash, hash, "")
+		result, err := findCache(cacheDir, platform, hash, "")
 		if err == nil {
 			m.Note("Reusing saved local OTA and its verified extracted cache; skipping network download")
 			m.Note("Local OTA: " + filename)

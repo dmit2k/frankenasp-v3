@@ -173,13 +173,14 @@ func run() error {
 		return fmt.Errorf("release manifest unavailable: %w", e)
 	}
 	var manifest struct {
-		Schema   string `json:"schema"`
-		Platform string `json:"platform"`
+		Schema      string `json:"schema"`
+		Platform    string `json:"platform"`
+		CacheSchema string `json:"cache_schema"`
 	}
 	if e = json.Unmarshal(manifestRaw, &manifest); e != nil {
 		return e
 	}
-	if manifest.Schema != "ASP1-ASSETS-V3" || (manifest.Platform != "athena" && manifest.Platform != "rook") {
+	if manifest.Schema != "ASP1-ASSETS-V3" || manifest.CacheSchema != cacheSchema || (manifest.Platform != "athena" && manifest.Platform != "rook") {
 		return errors.New("invalid release manifest")
 	}
 	if *platform == "" {
@@ -196,27 +197,31 @@ func run() error {
 	if cmd == "check-vendor" && *platform != "athena" {
 		return errors.New("check-vendor is supported only on Athena")
 	}
-	child, e := os.ReadFile(filepath.Join(*assets, "asp1-child"))
-	if e != nil {
-		return e
-	}
-	if _, e = elfNeeded(child, false, "/system/bin/linker"); e != nil {
-		return fmt.Errorf("invalid bundled helper ELF: %w", e)
-	}
-	launcher, e := os.ReadFile(filepath.Join(*assets, "external-asp"))
-	if e != nil {
-		return e
-	}
-	if _, e = elfNeeded(launcher, false, ""); e != nil {
-		return fmt.Errorf("invalid bundled launcher ELF: %w", e)
-	}
-	if *platform == "athena" {
-		mapData, err := os.ReadFile(filepath.Join(*assets, "channel-map"))
-		if err != nil {
-			return err
+	// Inspection extracts only factory artifacts; no helper/launcher is needed.
+	var child []byte
+	if cmd != "inspect" {
+		child, e = os.ReadFile(filepath.Join(*assets, "asp1-child"))
+		if e != nil {
+			return e
 		}
-		if err = validateChannelMap(mapData); err != nil {
-			return err
+		if _, e = elfNeeded(child, false, "/system/bin/linker"); e != nil {
+			return fmt.Errorf("invalid bundled helper ELF: %w", e)
+		}
+		launcher, e := os.ReadFile(filepath.Join(*assets, "external-asp"))
+		if e != nil {
+			return e
+		}
+		if _, e = elfNeeded(launcher, false, ""); e != nil {
+			return fmt.Errorf("invalid bundled launcher ELF: %w", e)
+		}
+		if *platform == "athena" {
+			mapData, err := os.ReadFile(filepath.Join(*assets, "channel-map"))
+			if err != nil {
+				return err
+			}
+			if err = validateChannelMap(mapData); err != nil {
+				return err
+			}
 		}
 	}
 	if mutating && os.Geteuid() != 0 {
@@ -246,7 +251,7 @@ func run() error {
 	if e = migrateCacheNames(*cachePath, meter); e != nil {
 		return e
 	}
-	extraction, downloadedOTA, cleanup, e := loadExtracted(ctx, *cachePath, *platform, *ota, *otaURL, *firmware, searchDirectory, cmd, child, *forceNoBackup, *refreshCache, *removeOTA, meter)
+	extraction, downloadedOTA, cleanup, e := loadExtracted(ctx, *cachePath, *platform, *ota, *otaURL, *firmware, searchDirectory, cmd, *forceNoBackup, *refreshCache, *removeOTA, meter)
 	if cleanup != nil && *removeOTA {
 		defer cleanup()
 	}
@@ -254,6 +259,11 @@ func run() error {
 		return e
 	}
 	collectedItems := extraction.Items
+	if cmd != "inspect" {
+		if e := validateHelperRuntime(*platform, child, collectedItems); e != nil {
+			return e
+		}
+	}
 	summary := map[string]any{"platform": *platform, "ota_format": extraction.Metadata.OTAFormat, "factory_files": extraction.Metadata.Files, "factory_bytes": extraction.Metadata.Bytes, "dependency_edges": extraction.Metadata.DependencyEdges, "firmware": extraction.Metadata.Firmware, "fire_os_version": fireOSForCache(extraction.Metadata), "platform_label": displayPlatform(*platform), "cache": map[string]any{"hit": extraction.Hit, "path": extraction.Path, "source_sha256": extraction.Metadata.SourceSHA256}}
 	if *otaURL != "" && downloadedOTA != "" {
 		summary["downloaded_ota"] = map[string]any{"path": downloadedOTA, "retained": !*removeOTA}

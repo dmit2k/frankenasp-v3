@@ -12,25 +12,21 @@ import (
 
 func TestSelectFirmwareFromVerifiedCache(t *testing.T) {
 	base, found := fixtureCache(t)
-	for _, choice := range []string{"", "PS75741-7080", "7574.1", "athena-fireos-7574.1-build-PS75741-7080"} {
-		selected, e := selectFirmwareCache(base, "athena", found.Metadata.HelperSHA256, choice)
+	for _, choice := range []string{"", "PS75741-7080", "7574.1", "athena-fireos-7574.1-build-PS75741-7080-cache-v2"} {
+		selected, e := selectFirmwareCache(base, "athena", choice)
 		if e != nil || selected.Path != found.Path || !selected.Hit {
 			t.Fatalf("selection %q: %+v %v", choice, selected, e)
 		}
 	}
-	for _, choice := range []string{"PS75741-9999", "athena-fireos-7574.1-build-PS75741-7080-variant-2"} {
-		_, e := selectFirmwareCache(base, "athena", found.Metadata.HelperSHA256, choice)
+	for _, choice := range []string{"PS75741-9999", "athena-fireos-7574.1-build-PS75741-7080-cache-v2-variant-2"} {
+		_, e := selectFirmwareCache(base, "athena", choice)
 		if e == nil {
 			t.Fatalf("missing firmware %q selected", choice)
 		}
 	}
-	_, e := selectFirmwareCache(base, "rook", found.Metadata.HelperSHA256, "")
+	_, e := selectFirmwareCache(base, "rook", "")
 	if e == nil {
 		t.Fatal("wrong platform selected")
-	}
-	_, e = selectFirmwareCache(base, "athena", hashString("another helper"), "")
-	if e == nil {
-		t.Fatal("wrong helper selected")
 	}
 }
 func TestFirmwareWithoutOTAAutoAndExplicit(t *testing.T) {
@@ -38,7 +34,7 @@ func TestFirmwareWithoutOTAAutoAndExplicit(t *testing.T) {
 	for _, firmware := range []string{"", "PS75741-7080"} {
 		var out bytes.Buffer
 		meter := &progressMeter{out: &out, done: make(chan struct{})}
-		selected, path, cleanup, e := loadExtracted(context.Background(), base, "athena", "", "", firmware, t.TempDir(), "inspect", []byte("fake helper"), false, false, false, meter)
+		selected, path, cleanup, e := loadExtracted(context.Background(), base, "athena", "", "", firmware, t.TempDir(), "inspect", false, false, false, meter)
 		meter.Close()
 		if e != nil || selected.Path != found.Path || path != "" || cleanup != nil {
 			t.Fatalf("firmware %q failed: %v", firmware, e)
@@ -57,15 +53,15 @@ func TestFirmwareVariantsMustBeSelectedExplicitly(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = selectFirmwareCache(base, "athena", found.Metadata.HelperSHA256, "")
+	_, e = selectFirmwareCache(base, "athena", "")
 	if e == nil || !strings.Contains(e.Error(), "multiple firmware caches") {
 		t.Fatalf("ambiguous auto selection accepted: %v", e)
 	}
-	_, e = selectFirmwareCache(base, "athena", found.Metadata.HelperSHA256, "PS75741-7080")
+	_, e = selectFirmwareCache(base, "athena", "PS75741-7080")
 	if e == nil {
 		t.Fatal("ambiguous firmware label accepted")
 	}
-	selected, e := selectFirmwareCache(base, "athena", found.Metadata.HelperSHA256, filepath.Base(second.Path))
+	selected, e := selectFirmwareCache(base, "athena", filepath.Base(second.Path))
 	if e != nil || selected.Path != second.Path {
 		t.Fatalf("variant not selected: %v", e)
 	}
@@ -80,7 +76,7 @@ func TestOTACacheCopiesLocalSourceAndStatusInventory(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if want := filepath.Join(base, "ota-images", "athena-fireos-7574.1-build-PS75741-7080.bin"); dest != want {
+	if want := filepath.Join(base, "ota-images", "athena-fireos-7574.1-build-PS75741-7080-cache-v2.bin"); dest != want {
 		t.Fatalf("unexpected OTA cache path %s", dest)
 	}
 	if raw, e := os.ReadFile(source); e != nil || string(raw) != "fake OTA contents" {
@@ -171,11 +167,11 @@ func TestOriginalOTAFilenameIndexEnablesURLReuse(t *testing.T) {
 	if e := attachOriginalOTAName(found, source); e != nil {
 		t.Fatal(e)
 	}
-	fromURL, e := cacheForURLFilename(context.Background(), base, "athena", found.Metadata.HelperSHA256, "https://example.invalid/path/update-kindle-rook_user_690918120.bin")
+	fromURL, e := cacheForURLFilename(context.Background(), base, "athena", "https://example.invalid/path/update-kindle-rook_user_690918120.bin")
 	if e != nil || fromURL.Path != found.Path {
 		t.Fatalf("URL should reuse cached archive: %v", e)
 	}
-	if _, e = cacheForURLFilename(context.Background(), base, "athena", found.Metadata.HelperSHA256, "https://example.invalid/path/other.bin"); !errors.Is(e, os.ErrNotExist) {
+	if _, e = cacheForURLFilename(context.Background(), base, "athena", "https://example.invalid/path/other.bin"); !errors.Is(e, os.ErrNotExist) {
 		t.Fatalf("wrong source filename matched: %v", e)
 	}
 }

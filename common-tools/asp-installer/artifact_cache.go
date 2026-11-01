@@ -20,7 +20,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const cacheSchema = "ASP1-EXTRACTED-CACHE-V1"
+const cacheSchema = "ASP1-EXTRACTED-CACHE-V2"
 const cacheDirName = "asp-installer-cache"
 const cacheFileLimit = 512
 const cacheTotalLimit = 128 << 20
@@ -31,7 +31,6 @@ type cacheMetadata struct {
 	Firmware        string `json:"firmware"`
 	FireOS          string `json:"fire_os_version,omitempty"`
 	SourceSHA256    string `json:"source_sha256"`
-	HelperSHA256    string `json:"helper_sha256"`
 	URLSHA256       string `json:"url_sha256,omitempty"`
 	OriginalOTAName string `json:"original_ota_name,omitempty"`
 	OTAFormat       string `json:"ota_format"`
@@ -132,7 +131,7 @@ func cacheMatchesName(folder string, meta cacheMetadata) bool {
 	return false
 }
 
-// Distinct contents or helper builds of the same firmware receive numbered
+// Distinct source contents of the same firmware receive numbered
 // variants instead of opaque hash suffixes. Existing variants are never lost.
 func selectCacheDestination(base string, meta cacheMetadata) (string, bool, error) {
 	for variant := 1; variant <= 999; variant++ {
@@ -162,7 +161,7 @@ func selectCacheDestination(base string, meta cacheMetadata) (string, bool, erro
 		if prior.Schema != cacheSchema || prior.Platform != meta.Platform || prior.Firmware != meta.Firmware || !cacheMatchesName(name, prior) {
 			return "", false, fmt.Errorf("existing firmware cache identity mismatch: %s", candidate)
 		}
-		if prior.SourceSHA256 == meta.SourceSHA256 && prior.HelperSHA256 == meta.HelperSHA256 {
+		if prior.SourceSHA256 == meta.SourceSHA256 {
 			return candidate, true, nil
 		}
 	}
@@ -290,7 +289,7 @@ func readCache(path string) (cacheResult, error) {
 	if e = json.Unmarshal(data, &meta); e != nil {
 		return cacheResult{}, e
 	}
-	if meta.Schema != cacheSchema || (meta.Platform != "athena" && meta.Platform != "rook") || !firmwarePattern.MatchString(meta.Firmware) || (meta.FireOS != "" && !fireOSPattern.MatchString(meta.FireOS)) || !hexDigest.MatchString(meta.SourceSHA256) || !hexDigest.MatchString(meta.HelperSHA256) || (meta.URLSHA256 != "" && !hexDigest.MatchString(meta.URLSHA256)) || (meta.OriginalOTAName != "" && (meta.OriginalOTAName != safeOTAName(meta.OriginalOTAName) || strings.Contains(meta.OriginalOTAName, "/"))) || meta.Files < 1 || meta.Files > cacheFileLimit || meta.Bytes < 1 || meta.Bytes > cacheTotalLimit || meta.DependencyEdges < 0 || meta.DependencyEdges > 16384 {
+	if meta.Schema != cacheSchema || (meta.Platform != "athena" && meta.Platform != "rook") || !firmwarePattern.MatchString(meta.Firmware) || (meta.FireOS != "" && !fireOSPattern.MatchString(meta.FireOS)) || !hexDigest.MatchString(meta.SourceSHA256) || (meta.URLSHA256 != "" && !hexDigest.MatchString(meta.URLSHA256)) || (meta.OriginalOTAName != "" && (meta.OriginalOTAName != safeOTAName(meta.OriginalOTAName) || strings.Contains(meta.OriginalOTAName, "/"))) || meta.Files < 1 || meta.Files > cacheFileLimit || meta.Bytes < 1 || meta.Bytes > cacheTotalLimit || meta.DependencyEdges < 0 || meta.DependencyEdges > 16384 {
 		return cacheResult{}, errors.New("invalid cache manifest")
 	}
 	if !cacheMatchesName(filepath.Base(path), meta) {
@@ -375,7 +374,7 @@ func readCache(path string) (cacheResult, error) {
 	}
 	return cacheResult{Items: files, Metadata: meta, Path: path, Hit: true}, nil
 }
-func findCache(base, platform, helperHash, sourceHash, urlHash string) (cacheResult, error) {
+func findCache(base, platform, sourceHash, urlHash string) (cacheResult, error) {
 	entries, e := os.ReadDir(base)
 	if e != nil {
 		return cacheResult{}, e
@@ -394,7 +393,7 @@ func findCache(base, platform, helperHash, sourceHash, urlHash string) (cacheRes
 		if json.Unmarshal(raw, &meta) != nil {
 			continue
 		}
-		if meta.Platform != platform || meta.HelperSHA256 != helperHash {
+		if meta.Schema != cacheSchema || meta.Platform != platform {
 			continue
 		}
 		if sourceHash != "" && meta.SourceSHA256 != sourceHash {

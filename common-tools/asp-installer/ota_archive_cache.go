@@ -286,7 +286,7 @@ func cacheInventory(ctx context.Context, base string) ([]extractionStatus, []ima
 	return extra, images
 }
 
-func cacheForURLFilename(ctx context.Context, base, platform, helperHash, rawURL string) (cacheResult, error) {
+func cacheForURLFilename(ctx context.Context, base, platform, rawURL string) (cacheResult, error) {
 	parsed, e := url.Parse(rawURL)
 	if e != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
 		return cacheResult{}, errors.New("invalid OTA URL")
@@ -313,7 +313,7 @@ func cacheForURLFilename(ctx context.Context, base, platform, helperHash, rawURL
 		if json.Unmarshal(metaRaw, &meta) != nil {
 			continue
 		}
-		if meta.Platform != platform || meta.HelperSHA256 != helperHash || meta.OriginalOTAName != filename {
+		if meta.Schema != cacheSchema || meta.Platform != platform || meta.OriginalOTAName != filename {
 			continue
 		}
 		found, err := readCache(p)

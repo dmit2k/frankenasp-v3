@@ -31,5 +31,5 @@ printf '{"schema":"ASP1-ASSETS-V3","platform":"%s"}\n' "$platform" > "$pkg/asset
 chmod 0500 "$pkg/asp-installer" "$pkg/assets/external-asp" "$pkg/assets/asp1-child"
 chmod 0600 "$pkg/assets/manifest.json"
 if [[ "$platform" == athena ]]; then chmod 0600 "$pkg/assets/channel-map"; fi
-(cd "$out" && tar -czf "frankenasp-v3-$platform-arm32.tar.gz" "frankenasp-$platform")
+(cd "$out" && tar --owner=0 --group=0 --numeric-owner -czf "frankenasp-v3-$platform-arm32.tar.gz" "frankenasp-$platform")
 echo "$out/frankenasp-v3-$platform-arm32.tar.gz"

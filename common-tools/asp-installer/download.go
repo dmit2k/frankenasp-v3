@@ -27,11 +27,21 @@ func enoughSpace(dir string, required uint64) error {
 	return nil
 }
 func download(ctx context.Context, raw, dir string) (string, func(), error) {
+	return downloadWithReserve(ctx, raw, dir, 0)
+}
+
+// extraReserve protects staged runtime and backup capacity on the same filesystem.
+// OTA data must never consume that space while downloading.
+func downloadWithReserve(ctx context.Context, raw, dir string, extraReserve uint64) (string, func(), error) {
 	u, e := url.Parse(raw)
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return "", nil, errors.New("OTA URL must be HTTP(S)")
 	}
-	if e = enoughSpace(dir, 128<<20); e != nil {
+	initial, e := sumSpace(128<<20, extraReserve)
+	if e != nil {
+		return "", nil, e
+	}
+	if e = enoughSpace(dir, initial); e != nil {
 		return "", nil, e
 	}
 	file, e := os.CreateTemp(dir, ".asp-installer-ota-partial-")
@@ -74,7 +84,12 @@ func download(ctx context.Context, raw, dir string) (string, func(), error) {
 		return "", nil, errors.New("OTA exceeds 2GiB")
 	}
 	if resp.ContentLength > 0 {
-		if e = enoughSpace(dir, uint64(resp.ContentLength)+(64<<20)); e != nil {
+		need, err := sumSpace(uint64(resp.ContentLength), 64<<20, extraReserve)
+		if err != nil {
+			cleanup()
+			return "", nil, err
+		}
+		if e = enoughSpace(dir, need); e != nil {
 			cleanup()
 			return "", nil, e
 		}
@@ -90,7 +105,12 @@ func download(ctx context.Context, raw, dir string) (string, func(), error) {
 				return "", nil, errors.New("OTA exceeded 2GiB")
 			}
 			if n%(16<<20) < int64(count) {
-				if e = enoughSpace(dir, 64<<20); e != nil {
+				need, err := sumSpace(64<<20, extraReserve)
+				if err != nil {
+					cleanup()
+					return "", nil, err
+				}
+				if e = enoughSpace(dir, need); e != nil {
 					cleanup()
 					return "", nil, e
 				}

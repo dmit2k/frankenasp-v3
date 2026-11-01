@@ -78,6 +78,18 @@ The installer scans process executable identities, open file descriptors, memory
 
 `--vendor-mode auto` (default) uses live vendor on Athena only on a successful match and a read-only mount, otherwise bundles vendor from the selected OTA. `--vendor-mode bundled` forces full private vendor copies; `--vendor-mode live` refuses if incompatible.
 
+## Disk-space preflight
+
+All mutation commands check the filesystem free-space budget *before* writing a new runtime or archival backup. A fixed 64 MiB reserve protects the normal device filesystem from being filled by installer operations. Before an OTA URL download for install/update, the installer reserves a conservative 168 MiB capacity for a future private runtime plus the estimated uncompressed upper bound of the backup, if enabled. After the OTA has been selectively extracted into memory, it recalculates the stage budget from the actual dependency closure, bundled assets, per-file filesystem allocation, directory metadata and backup estimate.
+
+- If the OTA URL supplies an HTTP `Content-Length`, the exact transfer size plus reserved future runtime, backup and safety margin must fit **before downloading the body**.
+- Without a `Content-Length`, available space is checked while downloading; the OTA download is aborted before it consumes space reserved for installation.
+- The OTA temporary directory and the target rootfs are checked separately if located on **different filesystems**, using filesystem device identifiers. A local `--ota` already occupies its disk space and is not counted twice.
+- `--force-no-backup` excludes the optional TAR archive but **not** the new staged rootfs, the old retained generation, or the 64 MiB reserve. `rollback` separately reserves space for its mandatory backup.
+- Each budget prints the free/required disk space and the OTA, runtime, backup and safety-margin components to stderr. The installer rejects an insufficient budget before modifying the installed tree.
+
+This is an advance capacity estimate, not disk-space allocation: another process writing to the same filesystem can still cause `ENOSPC` between checks. Normal filesystem errors remain fatal and do not authorize overwriting a known generation. The old installation is retained through the update transaction.
+
 ## Rollback and uninstall
 
 ```sh

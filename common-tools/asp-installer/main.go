@@ -173,11 +173,15 @@ func run() error {
 	if cmd == "update" {
 		meter.Note("Disable External ASP manually in TECHO5 settings to prevent helper respawn")
 	}
+	extraDownloadReserve, e := preflightBeforeOTA(cmd, *otaURL, *tmp, *forceNoBackup, meter)
+	if e != nil {
+		return e
+	}
 	source := *ota
 	cleanup := func() {}
 	if *otaURL != "" {
 		meter.Phase("Downloading user-selected OTA (without manufacturer SHA or TLS certificate validation)")
-		source, cleanup, e = download(ctx, *otaURL, *tmp)
+		source, cleanup, e = downloadWithReserve(ctx, *otaURL, *tmp, extraDownloadReserve)
 		if e != nil {
 			return e
 		}

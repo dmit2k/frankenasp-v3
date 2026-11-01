@@ -206,7 +206,11 @@ func archiveBackup(root string, m *progressMeter) (string, error) {
 	if !ok || !st.IsDir() || st.Mode().Perm() != 0700 || ss.Uid != 0 {
 		return "", errors.New("untrusted backup folder")
 	}
-	if e = enoughSpace(parentPath(), 128<<20); e != nil {
+	estimated, e := estimateTreeBackup(root)
+	if e != nil {
+		return "", e
+	}
+	if e = requireSpace(diskNeed{Role: "backup filesystem", Path: parentPath(), Backup: estimated, Reserve: spaceReserve}, m); e != nil {
 		return "", e
 	}
 	m.Phase("Archiving installed external-asp before update")
@@ -390,6 +394,9 @@ func installOrUpdate(platform, assets string, items map[string][]byte, source, m
 		var sourceID fileID
 		if exists {
 			sourceID, _ = idOf(destination)
+		}
+		if err := preflightBuild(result["action"].(string), platform, mode, assets, items, skipBackup, m); err != nil {
+			return err
 		}
 		m.Phase("Preparing separate immutable runtime generation")
 		stage, e := os.MkdirTemp(parentPath(), ".external-asp-stage-v3-")

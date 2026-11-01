@@ -107,9 +107,9 @@ func displayPlatform(platform string) string {
 
 func cacheFilename(meta cacheMetadata) string {
 	if osVersion := fireOSForCache(meta); osVersion != "" {
-		return meta.Platform + "-fireos-" + osVersion + "-build-" + meta.Firmware + "-cache-v2"
+		return meta.Platform + "-fireos-" + osVersion + "-build-" + meta.Firmware + ""
 	}
-	return meta.Platform + "-" + meta.Firmware + "-cache-v2"
+	return meta.Platform + "-" + meta.Firmware + ""
 }
 
 // Called with the existing exclusive cache lock. Legacy directories are

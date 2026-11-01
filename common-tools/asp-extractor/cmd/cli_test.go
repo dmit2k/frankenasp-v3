@@ -46,7 +46,7 @@ func TestCacheAmbiguityAndTamper(t *testing.T) {
 	}
 }
 func TestRemotePathGuard(t *testing.T) {
-	ok := []string{echoInstaller, echoCache + "/athena-fireos-7574.1-build-PS75741-7080-cache-v2/files/system/bin/linker"}
+	ok := []string{echoInstaller, echoCache + "/athena-fireos-7574.1-build-PS75741-7080/files/system/bin/linker"}
 	for _, p := range ok {
 		if err := remoteSafePath(p); err != nil {
 			t.Errorf("valid path %s rejected: %v", p, err)
@@ -180,7 +180,7 @@ func TestBackupSourceIndex(t *testing.T) {
 	if err := ensureDesktopCache(o.cacheDir); err != nil {
 		t.Fatal(err)
 	}
-	sample := cacheResult{Metadata: cacheMetadata{Firmware: "690918120", SourceSHA256: strings.Repeat("b", 64)}, Path: filepath.Join(o.cacheDir, "rook-fireos-5.5.6.9-build-690918120-cache-v2")}
+	sample := cacheResult{Metadata: cacheMetadata{Firmware: "690918120", SourceSHA256: strings.Repeat("b", 64)}, Path: filepath.Join(o.cacheDir, "rook-fireos-5.5.6.9-build-690918120")}
 	if err := recordBackupLink(o, sample); err != nil {
 		t.Fatal(err)
 	}
@@ -269,8 +269,8 @@ func TestInstallerInstructionsUseFirmwareBuildNotCacheDirectory(t *testing.T) {
 	for _, tc := range []struct {
 		platform, firmware, cacheName string
 	}{
-		{"rook", "690918120", "rook-fireos-5.5.6.9-build-690918120-cache-v2"},
-		{"athena", "PS75741-7080", "athena-fireos-7574.1-build-PS75741-7080-cache-v2"},
+		{"rook", "690918120", "rook-fireos-5.5.6.9-build-690918120"},
+		{"athena", "PS75741-7080", "athena-fireos-7574.1-build-PS75741-7080"},
 	} {
 		t.Run(tc.platform, func(t *testing.T) {
 			cache := cacheResult{
@@ -292,5 +292,24 @@ func TestInstallerInstructionsUseFirmwareBuildNotCacheDirectory(t *testing.T) {
 				t.Fatalf("printed cache name as preferred firmware: %s", got)
 			}
 		})
+	}
+}
+
+func TestDesktopFirmwareSelectionByBuildFireOSAndExactDirectory(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "asp-installer-cache")
+	if err := ensureDesktopCache(base); err != nil {
+		t.Fatal(err)
+	}
+	meta := cacheMetadata{Platform: "rook", Firmware: "690918120", FireOS: "5.5.6.9", SourceSHA256: strings.Repeat("d", 64), OTAFormat: "ZIP_FULL_BLOCK_v3"}
+	saved, err := publishCache(base, meta, map[string][]byte{"system/bin/linker": []byte("test linker")}, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, choice := range []string{"690918120", "5.5.6.9", filepath.Base(saved.Path)} {
+		o := options{platform: "rook", firmware: choice, cacheDir: base}
+		selected, err := selectDesktopCache(o)
+		if err != nil || selected.Path != saved.Path {
+			t.Fatalf("selection %q: %q, %v", choice, selected.Path, err)
+		}
 	}
 }

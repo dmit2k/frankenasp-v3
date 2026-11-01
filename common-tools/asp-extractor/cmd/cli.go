@@ -224,8 +224,8 @@ Commands: extract, list, verify, create-bundle, deploy-cache, deploy-asp, deploy
 
   extract        --ota FILE | --ota-url URL | --backup-dir DIR
   list           [--platform CODENAME] [--cache-dir ABS_PATH]
-  verify         [--firmware VERSION_OR_CACHE]
-  create-bundle  --firmware VERSION --asp-release FILE --output BUNDLE.tar.gz
+  verify         [--firmware BUILD_OR_EXACT_DIRECTORY]
+  create-bundle  [--firmware BUILD_OR_EXACT_DIRECTORY] --asp-release FILE --output BUNDLE.tar.gz
   deploy-cache   --host root@ECHO [--firmware VERSION]
   deploy-asp     --host root@ECHO --asp-release FILE             (installer only)
   deploy-all     --host root@ECHO --asp-release FILE [--firmware VERSION] (installer + cache)
@@ -237,6 +237,8 @@ Common: --platform, --firmware, --cache-dir, --asp-release,
 For local OTA and backup extraction, platform is detected automatically.
 For --ota-url, specify --platform.
 --asp-release FILE is a local .tar.gz archive path, NOT a version number.
+--firmware normally takes Amazon's firmware build (e.g. 690918120), not a
+cache directory; use the exact directory name only to distinguish variants.
 --cache-dir is optional; defaults to:
   $XDG_CACHE_HOME/frankenasp/asp-extractor/asp-installer-cache
   (or ~/.cache/frankenasp/asp-extractor/asp-installer-cache).

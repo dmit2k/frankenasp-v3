@@ -67,17 +67,17 @@ ROOK=/path/to/frankenasp-v<VERSION>-rook-arm32.tar.gz
 "$E" extract --backup-dir /backup/athena/partitions
 
 "$E" list
-"$E" --platform athena verify --firmware athena-fireos-7574.1-build-PS75741-7080-cache-v2
+"$E" --platform athena verify --firmware PS75741-7080
 
 "$E" create-bundle \
-  --firmware athena-fireos-7574.1-build-PS75741-7080-cache-v2 \
+  --firmware PS75741-7080 \
   --asp-release "$ATHENA" --output ./athena-private-bundle.tar.gz
 
 # SSH host keys MUST already be pinned in ~/.ssh/known_hosts.
-"$E" --platform athena deploy-cache --host root@10.0.0.2 --firmware athena-fireos-7574.1-build-PS75741-7080-cache-v2
+"$E" --platform athena deploy-cache --host root@10.0.0.2 --firmware PS75741-7080
 "$E" deploy-asp --host root@10.0.0.2 --asp-release "$ATHENA"
 "$E" deploy-all --host root@10.0.0.2 \
-  --firmware athena-fireos-7574.1-build-PS75741-7080-cache-v2 --asp-release "$ATHENA"
+  --firmware PS75741-7080 --asp-release "$ATHENA"
 ```
 
 Flags for SSH: `--identity PATH` (default: an unencrypted user SSH private
@@ -93,9 +93,10 @@ FrankenASP release, supply `--asp-release FILE`, which is a path to a
 versioned local `.tar.gz` archive, **not** a version number; its embedded
 manifest determines the platform. `--firmware` is optional when the selected
 cache is unambiguous; otherwise use the **exact cache directory name**.
-Factory caches use `ASP1-EXTRACTED-CACHE-V2`, independent of the helper.
-Existing V1 caches are preserved but are not selected as V2 caches; repeat
-`extract` from the original local OTA or backup to produce a V2 cache.
+Factory caches use the internal `ASP1-EXTRACTED-CACHE-V2` manifest schema,
+independent of the helper; schema versions are **not** part of directory names.
+Existing V1 caches are not selected as V2 caches. Obsolete caches must be
+re-extracted or explicitly replaced; automatic deletion is not performed.
 
 ### Backup layouts
 

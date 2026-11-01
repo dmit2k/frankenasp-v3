@@ -167,7 +167,7 @@ func TestCacheLockHonorsCancellation(t *testing.T) {
 
 func TestReadableFirmwareCacheNamesAndNumberedVariants(t *testing.T) {
 	base, first := fixtureCache(t)
-	if actual := filepath.Base(first.Path); actual != "athena-fireos-7574.1-build-PS75741-7080-cache-v2" {
+	if actual := filepath.Base(first.Path); actual != "athena-fireos-7574.1-build-PS75741-7080" {
 		t.Fatalf("unreadable cache directory: %q", actual)
 	}
 	alt := first.Metadata
@@ -177,7 +177,7 @@ func TestReadableFirmwareCacheNamesAndNumberedVariants(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if actual := filepath.Base(second.Path); actual != "athena-fireos-7574.1-build-PS75741-7080-cache-v2-variant-2" {
+	if actual := filepath.Base(second.Path); actual != "athena-fireos-7574.1-build-PS75741-7080-variant-2" {
 		t.Fatalf("unexpected variant name: %q", actual)
 	}
 	if _, e := os.Stat(first.Path); e != nil {
@@ -200,5 +200,20 @@ func TestRookFirmwareReadableLabel(t *testing.T) {
 	got := firmwareLabel("Amazon/rook/rook:5.1.1/LVY48F/304.6.9.0_user_690918120:user/release-keys", "")
 	if got != "690918120" {
 		t.Fatalf("incorrect rook release label: %s", got)
+	}
+}
+
+func TestFactoryCacheDirectoryNameDoesNotExposeSchemaVersion(t *testing.T) {
+	for _, tc := range []struct {
+		meta cacheMetadata
+		want string
+	}{
+		{cacheMetadata{Platform: "athena", Firmware: "PS75741-7080", FireOS: "7574.1"}, "athena-fireos-7574.1-build-PS75741-7080"},
+		{cacheMetadata{Platform: "rook", Firmware: "690918120", FireOS: "5.5.6.9"}, "rook-fireos-5.5.6.9-build-690918120"},
+		{cacheMetadata{Platform: "rook", Firmware: "613509220"}, "rook-613509220"},
+	} {
+		if name := cacheFilename(tc.meta); name != tc.want {
+			t.Errorf("got %q, want %q", name, tc.want)
+		}
 	}
 }

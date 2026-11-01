@@ -145,6 +145,11 @@ has been completely transferred and verified; it is not backed up.
 After delivery the CLI prints the current installer's **manual** commands:
 `./asp-installer status`, then `install --yes` for a new runtime or
 `update --yes` for an existing one, after disabling External ASP manually.
+For `deploy-cache` and `deploy-all` the suggested `--firmware` value is the
+original Amazon firmware build (such as `690918120`), **not** the verbose
+cache directory name. If multiple verified cache variants have the same build,
+the embedded installer requires the exact cache directory name as an explicit
+selection; the delivery output also shows that name.
 
 ## Desktop OS extension
 

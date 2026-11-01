@@ -386,7 +386,7 @@ func deploy(o options) error {
 	fmt.Println("Delivery complete. No installer, echod, or persistent service was executed or changed.")
 	fmt.Printf("Manual follow-up:\n  ssh -p %d %s\n  cd %s\n  ./asp-installer status\n", o.port, o.host, echoInstaller)
 	if o.command != "deploy-asp" {
-		fmt.Printf("  # First disable External ASP in TECHO5 settings. If no runtime exists:\n  ./asp-installer install --firmware %s --yes\n  # If runtime already exists, use instead:\n  ./asp-installer update --firmware %s --yes\n", filepath.Base(cache.Path), filepath.Base(cache.Path))
+		fmt.Print(installerFirmwareInstructions(cache))
 	} else {
 		fmt.Println("  # First disable External ASP in TECHO5 settings.")
 		fmt.Println("  # If exactly one matching firmware cache is available and no runtime exists:")
@@ -396,4 +396,25 @@ func deploy(o options) error {
 		fmt.Println("  # For multiple firmware caches, add --firmware CACHE_DIRECTORY_NAME.")
 	}
 	return nil
+}
+
+// installerFirmwareInstructions prefers the Amazon firmware build identifier.
+// The embedded installer resolves --firmware by build, Fire OS version or
+// exact cache directory. The exact directory is needed only to disambiguate
+// multiple cache variants with the same firmware build.
+func installerFirmwareInstructions(cache cacheResult) string {
+	firmware := cache.Metadata.Firmware
+	cacheName := filepath.Base(cache.Path)
+	if firmware == "" {
+		firmware = cacheName
+	}
+	return fmt.Sprintf(`  # Amazon firmware build: %s
+  # Delivered factory cache: %s
+  # First disable External ASP in TECHO5 settings. If no runtime exists:
+  ./asp-installer install --firmware %s --yes
+  # If runtime already exists, use instead:
+  ./asp-installer update --firmware %s --yes
+  # Only if multiple caches share this firmware build, choose the exact cache:
+  # --firmware %s
+`, firmware, cacheName, firmware, firmware, cacheName)
 }

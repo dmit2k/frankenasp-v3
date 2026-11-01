@@ -264,3 +264,33 @@ func TestCommandDetectionSkipsOptionValuesAndNamesUnknownCommands(t *testing.T) 
 		}
 	}
 }
+
+func TestInstallerInstructionsUseFirmwareBuildNotCacheDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		platform, firmware, cacheName string
+	}{
+		{"rook", "690918120", "rook-fireos-5.5.6.9-build-690918120-cache-v2"},
+		{"athena", "PS75741-7080", "athena-fireos-7574.1-build-PS75741-7080-cache-v2"},
+	} {
+		t.Run(tc.platform, func(t *testing.T) {
+			cache := cacheResult{
+				Metadata: cacheMetadata{Platform: tc.platform, Firmware: tc.firmware},
+				Path:     filepath.Join("/tmp/asp-installer-cache", tc.cacheName),
+			}
+			got := installerFirmwareInstructions(cache)
+			for _, command := range []string{
+				"./asp-installer install --firmware " + tc.firmware + " --yes",
+				"./asp-installer update --firmware " + tc.firmware + " --yes",
+				"# Delivered factory cache: " + tc.cacheName,
+				"# --firmware " + tc.cacheName,
+			} {
+				if !strings.Contains(got, command) {
+					t.Errorf("missing %q in generated instructions:\n%s", command, got)
+				}
+			}
+			if strings.Contains(got, "./asp-installer install --firmware "+tc.cacheName) {
+				t.Fatalf("printed cache name as preferred firmware: %s", got)
+			}
+		})
+	}
+}

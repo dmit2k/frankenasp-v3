@@ -8,7 +8,7 @@ The repository-root `VERSION` file defines the next/current release baseline, e.
 
 - A clean checkout of an **annotated** matching release tag (`v3.1`) builds as `3.1`.
 - Builds from untagged commits or a modified working tree use `3.1.YYMMDDHHMMSS`, where the suffix is the UTC build timestamp.
-- A new release bumps the baseline, e.g. `3.2`. Published tags must not be moved.
+- A new release bumps the baseline, e.g. `3.3`. Published tags must not be moved.
 - Build archive names include the complete version: `frankenasp-v3.1-athena-arm32.tar.gz`, `frankenasp-v3.1-rook-arm32.tar.gz`; timestamped builds use the full timestamped version.
 
 `common-tools/asp-installer/resolve-version.sh` implements this policy and `version_test.sh` tests tagged/untagged scenarios. Optionally set `SOURCE_DATE_EPOCH` to share the same UTC timestamp across both platform build invocations.
@@ -17,16 +17,17 @@ The repository-root `VERSION` file defines the next/current release baseline, e.
 
 1. Update `VERSION` to the selected major/minor and write release notes in `docs/releases/vMAJOR.MINOR.md` describing code changes since the previous release. Commit code, docs and `VERSION`; run platform tests plus `go test -race -count=1 ./...` and `go vet ./...` in `common-tools/asp-installer`. Confirm clean Git state and the intended commit.
 2. Create an **annotated** `vMAJOR.MINOR` tag on that exact commit. Do not retag older releases.
-3. Build both ARM32 packages **from that clean tagged checkout** with `common-tools/asp-installer/build-release.sh`. Check that both archive names contain the same release version, and inspect each TAR's contents and platform manifest. Only FrankenASP-owned assets are permitted; factory vendor binaries must not be distributed.
+3. Build both ARM32 packages **from that clean tagged checkout** with `common-tools/asp-installer/build-release.sh`, using the approved ARM32 Linux launchers and Bionic children for Athena and Rook. Build and package the standalone Linux x86_64 desktop extractor using `common-tools/asp-extractor/build.sh` and `package.sh`. Check that all archive names contain the exact same tagged release version; inspect the Echo asset manifests and the desktop archive contents (`asp-extractor`, `LICENSE`, `README.md`, `ASP-EXTRACTOR.md`). Only FrankenASP-owned assets are permitted; factory vendor binaries must not be distributed.
 4. Create an independent temporary Git branch `release-assets/vMAJOR.MINOR` containing exactly:
    - `frankenasp-vMAJOR.MINOR-athena-arm32.tar.gz`
    - `frankenasp-vMAJOR.MINOR-rook-arm32.tar.gz`
-   - `SHA256SUMS` listing those two archive filenames and hashes
+   - `asp-extractor-vMAJOR.MINOR-linux-amd64.tar.gz`
+   - `SHA256SUMS` listing all three archive filenames and hashes
    - `COMMIT` with the full source commit hash, newline-terminated
    - `TAG` with the exact `vMAJOR.MINOR` tag, newline-terminated
 5. Push the assets branch, then push the release commit to `main`. **Only after** the matching branch and `main` are published, push the annotated release tag.
-6. The GitHub Actions workflow `.github/workflows/publish-release.yml` responds to the tag push, verifies `VERSION`, `COMMIT`, `TAG`, SHA-256 checksums and platform archives, and uses GitHub's job token to create a GitHub Release with both assets, `SHA256SUMS`, and the checked-in `docs/releases/vMAJOR.MINOR.md` release notes.
-7. Verify the Actions run completed successfully, that the Release exists and includes all three files, and that the published asset hashes match the source archives. After acceptance, delete the temporary release-assets branch. Retain the immutable release tag and Release attachments.
+6. The GitHub Actions workflow `.github/workflows/publish-release.yml` responds to the tag push, verifies `VERSION`, `COMMIT`, `TAG`, SHA-256 checksums and platform archives, and uses GitHub's job token to create a GitHub Release with all three independent platform archives, `SHA256SUMS`, and the checked-in `docs/releases/vMAJOR.MINOR.md` release notes.
+7. Verify the Actions run completed successfully, that the Release exists and includes all four assets (three platform archives and `SHA256SUMS`), and that the published asset hashes match the source archives. After acceptance, delete the temporary release-assets branch. Retain the immutable release tag and Release attachments.
 
 Pushes to `main` alone do **not** create releases. The publisher intentionally does not compile device launchers/Bionic binaries on GitHub runners; those platform-specific binaries are built and reviewed by the maintainer before publication.
 

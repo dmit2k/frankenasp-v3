@@ -20,7 +20,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Checkout separately staged, platform-specific archives
+      - name: Checkout separately staged, independently built release archives
         uses: actions/checkout@v4
         with:
           ref: release-assets/${{ github.ref_name }}
@@ -39,9 +39,17 @@ jobs:
           cd release-assets
           sha256sum --check --strict SHA256SUMS
           for platform in athena rook; do
-            test -s "frankenasp-${TAG}-${platform}-arm32.tar.gz"
-            tar -tzf "frankenasp-${TAG}-${platform}-arm32.tar.gz" | grep -Fx "frankenasp-${platform}/asp-installer"
+            archive="frankenasp-${TAG}-${platform}-arm32.tar.gz"
+            test -s "$archive"
+            tar -tzf "$archive" | grep -Fx "frankenasp-${platform}/asp-installer"
+            tar -xOzf "$archive" "frankenasp-${platform}/assets/manifest.json" | \
+              python3 -c 'import json,sys; j=json.load(sys.stdin); assert j["schema"]=="ASP1-ASSETS-V3" and j["platform"]==sys.argv[1] and j["cache_schema"]=="ASP1-EXTRACTED-CACHE-V2"' "$platform"
           done
+          extractor="asp-extractor-${TAG}-linux-amd64.tar.gz"
+          test -s "$extractor"
+          tar -tzf "$extractor" | grep -Fx "asp-extractor-${TAG}-linux-amd64/asp-extractor"
+          tar -tzf "$extractor" | grep -Fx "asp-extractor-${TAG}-linux-amd64/ASP-EXTRACTOR.md"
+          test "$(wc -l < SHA256SUMS)" -eq 3
 
       - name: Publish GitHub Release with validated artifacts
         env:
@@ -57,7 +65,9 @@ jobs:
           gh release create "$TAG" \
             "release-assets/frankenasp-${TAG}-athena-arm32.tar.gz" \
             "release-assets/frankenasp-${TAG}-rook-arm32.tar.gz" \
+            "release-assets/asp-extractor-${TAG}-linux-amd64.tar.gz" \
             "release-assets/SHA256SUMS" \
             --verify-tag \
+            --latest \
             --title "FrankenASP ${version}" \
             --notes-file "$notes_file"

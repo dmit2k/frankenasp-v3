@@ -38,7 +38,7 @@ Maintainer release procedures are documented in [RELEASING.md](docs/RELEASING.md
 
 ## Install FrankenASP V3
 
-Official platform archives are available in [GitHub Releases](https://github.com/dmit2k/frankenasp-v3/releases).
+**Version 3.3 is the only recommended and supported stable release.** Download the separate Athena, Rook or Linux x86_64 packages from [GitHub Releases](https://github.com/dmit2k/frankenasp-v3/releases).
 
 There are **two ways to prepare and install FrankenASP V3**:
 

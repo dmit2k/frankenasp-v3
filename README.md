@@ -21,10 +21,6 @@ Both implementations have been deployed and exercised with TECHO5 and the origin
 
 [Echo Show 8 Gen 2 (Athena): controlled wake-word performance comparison](docs/athena-acoustic-comparison-20261025.md) — measured results for native TECHO5 versus Amazon factory ASP processing, including mono/stereo music playback, quiet and normal speech, spatial interference, and the test-room diagram.
 
-To prepare factory dependencies on Linux and transfer them to an Echo, see the [asp-extractor guide](docs/ASP-EXTRACTOR.md).
-
-Official platform archives are published in [GitHub Releases](https://github.com/dmit2k/frankenasp-v3/releases). The [installation guide](docs/ASP-INSTALL.md) describes the installed runtime and required OTA images. Maintainer release procedures are documented separately in [RELEASING.md](docs/RELEASING.md).
-
 ## Build and test
 
 ```sh
@@ -38,7 +34,11 @@ Production ARM32 launcher and Bionic child are built separately using `platforms
 
 **Vendor library files, firmware, calibration data and private runtime images are not distributed with this repository.**
 
+Maintainer release procedures are documented in [RELEASING.md](docs/RELEASING.md).
+
 ## Install FrankenASP V3
+
+Official platform archives are available in [GitHub Releases](https://github.com/dmit2k/frankenasp-v3/releases).
 
 There are **two ways to prepare and install FrankenASP V3**:
 

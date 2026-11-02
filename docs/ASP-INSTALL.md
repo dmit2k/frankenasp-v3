@@ -1,166 +1,189 @@
-# FrankenASP V3 — installation and maintenance
+# FrankenASP V3 — on-device installation and maintenance
 
-`asp-installer` is the native ARM32 Linux installer for FrankenASP V3 on supported TECHO5 Echo devices. It extracts the required **original factory ASP files** from an owner-provided Amazon OTA image, maintains a verified firmware cache, and manages the installed external ASP runtime.
+`asp-installer` installs and maintains the FrankenASP V3 **factory audio DSP runtime** on a supported Echo running TECHO5. It is a standalone ARM32 Linux executable, distinct from both the desktop [`asp-extractor`](ASP-EXTRACTOR.md) and the TECHO5 `echod` host. It can extract Amazon's original factory DSP dependencies from an owner-supplied **full OTA ZIP directly on the Echo**, or use a previously verified extraction prepared on the device or transferred from a desktop.
 
-**Supported devices:** Echo Show 8 (2nd generation, `athena`) and Echo Spot (1st generation, `rook`). Builds and firmware caches are platform-specific. No other Echo model is supported or implied.
+**Tested target models:** Echo Show 8 (2nd generation, `athena`) and Echo Spot (1st generation, `rook`) only. Use the release built for the actual model; support for other Echo devices is not implied. The installer package contains only FrankenASP-owned code and configuration: **no Amazon OTA, proprietary ASP binaries, calibration, or extracted factory files**. Those must come from the owner's firmware or backup.
 
-The FrankenASP release package contains the installer, its Linux launcher, the Bionic helper, and platform configuration. **It does not include Amazon firmware, proprietary libraries, calibration, or factory runtime images.** You must provide a compatible OTA or use a previously verified extraction cache. The installed runtime and factory cache are separate from the TECHO5 host binary.
+**Choose a workflow:** If the OTA is already on the Echo or can be downloaded to it, use [direct installation](#first-installation-from-an-ota-without-asp-extractor). If extraction is done on a Linux PC, use the [desktop delivery workflow](#first-installation-after-desktop-extraction) and [ASP-EXTRACTOR.md](ASP-EXTRACTOR.md). Both lead to the same on-device `install` / `update` operations.
 
-## Requirements and package layout
+## Prerequisites and installation boundary
 
-- A supported Echo running TECHO5 with root shell access and the compatible External ASP host integration.
-- The matching versioned `frankenasp-v<version>-athena-arm32.tar.gz` or `frankenasp-v<version>-rook-arm32.tar.gz` package, built for the target platform.
-- A compatible **full** Amazon OTA ZIP, unless the required extracted firmware cache already exists.
-- Sufficient free storage for a new OTA download, extracted cache, and any requested runtime backup.
+- Root shell on one of the supported Echo devices, with a compatible TECHO5 External ASP V3 host integration.
+- The **matching** `frankenasp-vVERSION-PLATFORM-arm32.tar.gz` release archive (`PLATFORM` is `athena` or `rook`). The filename's release version is **not** an Amazon firmware build.
+- Either a complete compatible Amazon OTA ZIP selected by the owner or a verified, matching factory-extraction cache. Incremental/patch-only OTA packages are not supported.
+- Enough writable storage for extraction, an optional downloaded OTA and the required runtime staging/backup. See [Disk space and security](#disk-space-integrity-and-security).
 
-On the Echo, unpack the archive and place **the contents of its `frankenasp-athena/` or `frankenasp-rook/` directory** in:
+**Before `install`, `update`, `rollback`, or `uninstall`, select Built-in / disable External ASP in TECHO5.** The installer does not change the TECHO5 selector, its persistent configuration or the running `echod` service by default. Verify the operation, then re-enable External ASP yourself. The existence of `external-asp/` does **not** mean it is currently selected or active; use TECHO5's own ASP status for that.
+
+The release archive contains a single `frankenasp-PLATFORM/` directory. On the Echo, its **contents** must reside at:
 
 ```text
 /data/techo5-linux/asp-installer-v3/
-├── asp-installer
+├── asp-installer             # ARM32 Linux executable
 ├── LICENSE
 └── assets/
-    ├── manifest.json
-    ├── external-asp
-    ├── asp1-child
-    └── channel-map        # Athena only
+    ├── manifest.json        # release platform and cache schema
+    ├── external-asp          # FrankenASP Linux launcher
+    ├── asp1-child            # Bionic factory DSP helper
+    └── channel-map           # athena only; absent on rook
 ```
 
-When updating the **installer package**, completely replace the previous contents of `asp-installer-v3/`. Do **not** remove or overwrite `/data/techo5-linux/external-asp/` (the deployed runtime) or `/data/techo5-linux/asp-installer-cache/` (the verified factory cache) as part of package replacement.
+The command examples use `cd /data/techo5-linux/asp-installer-v3` because `--assets` defaults to the **relative** directory `./assets` (relative to the shell's current working directory). Replacing only the installer package must not delete `external-asp/` or `asp-installer-cache/`.
 
-All examples below are run as root from:
+## First installation from an OTA without asp-extractor
+
+These are the minimal commands for a **new** installation, assuming `asp-installer-v3/` and `external-asp/` are not present, a full OTA is available on the PC, and TECHO5 is already installed. Substitute the target's actual package filename and SSH address; `VERSION` is a placeholder, not a literal release number.
+
+**On the PC**, copy the matching release and the owner-provided OTA to the Echo:
+
+```sh
+scp frankenasp-vVERSION-rook-arm32.tar.gz full-ota.zip \
+  root@ECHO_HOST:/data/techo5-linux/
+```
+
+**On the Echo** (`root` shell; external ASP disabled):
+
+```sh
+cd /data/techo5-linux
+
+tar -xzf frankenasp-vVERSION-rook-arm32.tar.gz
+mv frankenasp-rook asp-installer-v3
+cd asp-installer-v3
+
+./asp-installer install --ota /data/techo5-linux/full-ota.zip --yes
+./asp-installer status
+```
+
+For Athena, substitute the Athena release filename and extracted `frankenasp-athena` folder. The `install --ota` command **extracts and installs in one invocation**; a preliminary `inspect` is optional, not required. The full local OTA is read in place, not copied to `asp-installer-cache/`, and is not deleted by the installer. The operator manages that original file independently.
+
+**Alternative when the OTA is not on the Echo:** instead of `--ota`, provide your own approved download URL as `--ota-url "$OTA_URL"` in `install`; you must set `OTA_URL` to the actual complete firmware URL beforehand. In this case the installer downloads the OTA and, by default, retains it under its private cache; `--delete-downloaded-ota` opts out of retention for the new download. The installer does not authenticate the Amazon provenance of an arbitrary URL. If the cache already contains suitable files, no OTA is needed at all.
+
+`install` is strictly **first-install only**: it refuses to run if `/data/techo5-linux/external-asp/` exists. For an already installed runtime use `update`, never a second `install`.
+
+## First installation after desktop extraction
+
+When `asp-extractor` has already transferred the installer **and** a verified factory cache with `deploy-all`, no original OTA is needed on the Echo. The desktop transfer does not activate anything. In a root shell on the Echo, with External ASP disabled:
 
 ```sh
 cd /data/techo5-linux/asp-installer-v3
+./asp-installer status
+./asp-installer install --firmware YOUR_AMAZON_BUILD --yes
+./asp-installer status
 ```
 
-## Quick start
-
-**Before install, update, rollback, or uninstall, disable External ASP in TECHO5 settings.** The installer does not change the TECHO5 selector or persistence configuration. Re-enable External ASP manually after checking the installed runtime.
-
-```sh
-# Inspect an owner-provided local full OTA and populate/reuse the cache:
-./asp-installer inspect --ota /data/techo5-linux/update.bin
-
-# Alternatively use a user-selected OTA URL:
-./asp-installer inspect --ota-url 'https://example.org/firmware/update.bin'
-
-# Display installed runtime and all cached firmware/OTA files:
-./asp-installer status
-
-# Install from an existing, unique, verified cache (no OTA argument needed):
-./asp-installer install --yes
-
-# Or select a specific factory firmware build:
-./asp-installer install --firmware PS75741-7080 --yes
-
-# After installation:
-./asp-installer status
-./asp-installer check --firmware PS75741-7080
-```
-
-`install` requires `external-asp/` to be absent. If there is a recognized existing installation, use `update`, not `install`. Any mutating command requires **`--yes`**.
+`YOUR_AMAZON_BUILD` is a placeholder for the **actual Amazon firmware build ID** used during desktop extraction. If there is exactly one verified cache for the release platform, `--firmware` can be omitted. If two genuinely different sets share a build, use the exact cache directory name reported by the tools (including `-variant-N`). If a runtime is already present, use `update --firmware ... --yes` instead. See [ASP-EXTRACTOR.md](ASP-EXTRACTOR.md#prepare-and-deliver-an-ota-using-linux).
 
 ## Command reference
 
-| Command | Purpose |
+Run all commands from the installation directory as described above. `install`, `update`, `rollback`, and `uninstall` require `--yes`; the first two also require root and correct release assets. Other commands do not mutate the installed runtime.
+
+| Command | What it actually does |
 | --- | --- |
-| `version` | Show the version of the **running installer**. |
-| `status` | Show installed runtime metadata, saved generations, backup count, checked factory caches, and available OTA files. Does **not** establish that the helper is running or selected in TECHO5. |
-| `inspect` | Validate/reuse or extract factory files into the cache, without changing the installed runtime. |
-| `check` | Compare an existing installed FrankenASP runtime with the selected factory cache and release assets; report whether an update is required. |
-| `check-vendor` | **Athena only:** compare required factory files against live `/vendor` and report whether a live-vendor runtime is usable. |
-| `install --yes` | Install a new runtime, only if `external-asp/` does not exist. |
-| `update --yes` | Compare, optionally back up, and atomically replace a recognized existing runtime, retaining its previous generation. |
-| `rollback --generation NAME --yes` | Restore a listed saved runtime generation, retaining the replaced generation and creating a backup. |
-| `uninstall --yes` | Remove the recognized FrankenASP runtime and installer-managed generations; preserve factory caches and, by default, backup archives. |
+| `version` | Prints the executing installer version; this is distinct from the installed FrankenASP revision and Amazon firmware build. |
+| `status` | Reports installed runtime files/revision/vendor mode, **counts** of saved generations and backups, incomplete operations, verified extraction sets and saved OTA images. Use `status --json` to obtain exact saved generation names for rollback. **Does not confirm that the helper is running or selected in TECHO5.** |
+| `inspect` | Checks an existing firmware cache or reads/extracts a full OTA into it. Does not install or change the runtime. |
+| `check` | Compares a recognized installed runtime against selected release assets and extracted factory dependencies, reporting whether an update is needed. |
+| `check-vendor` | Athena only: compares required factory vendor files with live `/vendor` and assesses whether `live` vendor mode is usable. |
+| `install --yes` | Creates a runtime only if the normal `external-asp/` installation is absent. |
+| `update --yes` | Validates the installed runtime; compares contents; when different, creates an archive backup by default, atomically exchanges the runtime and retains the former one as a generation. An identical runtime is left unchanged. |
+| `rollback --generation NAME --yes` | Restores one saved generation, archives the current runtime, and retains the replaced runtime as another generation. |
+| `uninstall --yes` | Removes recognized installed runtime and managed generations; preserves extracted firmware cache and, by default, installer backup archives. |
 
-**Output format:** all commands print readable text by default. Use `--json` on the command to request a structured JSON result. The aliases `status-json`, `check-json`, `check-vendor-json`, and the corresponding `*-json` forms are also accepted. Progress messages, the startup version, and total elapsed time (including failed commands) are printed to **stderr**; JSON results go to **stdout** only. No redundant JSON invocation hint is appended.
+### Complete option reference
 
-Each command prints the running installer's version in its startup banner (for example, `asp-installer v3.1`); `version` and `version --json` report it explicitly. The installed FrankenASP runtime revision and Amazon firmware build are separate values.
+The underlying CLI uses standard Go command-specific flags: put options **after the subcommand**, e.g. `./asp-installer inspect --ota FILE`. Options with no specified value below use the indicated defaults.
 
-## Options
+| Option | Allowed context | Default / meaning |
+| --- | --- | --- |
+| `--ota FILE` | `inspect`, `check`, `check-vendor`, `install`, `update` | **Unset.** Path to an owner-provided local **full OTA ZIP** on the Echo. Read in place; never copied to the OTA archive or deleted. Exclusive with `--ota-url` and `--firmware`. |
+| `--ota-url URL` | Same five firmware-using commands | **Unset.** Download a full OTA from an explicitly supplied HTTP(S) URL. Exclusive with `--ota` and `--firmware`. Download retained by default. |
+| `--firmware NAME` | Same five firmware-using commands | **Unset.** Selects an existing extraction by Amazon build, uniquely matching Fire OS version, or exact directory name. With no OTA/source option, omission is allowed **only if precisely one compatible cache** exists for the release platform. Full OTA not needed. |
+| `--platform athena\|rook` | Commands using release assets | **Unset; inferred from `./assets/manifest.json`.** If explicitly set, must agree with the release. `check-vendor` works only on Athena. |
+| `--assets DIR` | Firmware-using commands | `./assets` (relative to current working directory). Must contain the correct release manifest and launcher/helper/channel map as appropriate. |
+| `--cache-dir DIR` | `status` and firmware-using commands | `/data/techo5-linux/asp-installer-cache` on Echo (derived from the fixed runtime deployment parent). Must be an absolute path, not `/`. |
+| `--ota-search-dir DIR` | Firmware-using commands | `<cache-dir>/ota-images`. **Only** a scan location for previously saved local OTA candidates when resolving a URL; not a download or temp directory. Requires an absolute, non-root path. |
+| `--tmp-dir DIR` | Firmware-using commands | **Unset.** Deprecated alias for `--ota-search-dir`, not a temp path. Cannot be combined with `--ota-search-dir`. |
+| `--refresh-cache` | Firmware-using commands with `--ota` or `--ota-url` | `false`. Reprocesses the explicit source rather than accepting an early cache hit. Identical extracted factory files are still deduplicated; a different set is kept as a variant. Not permitted with cache-only selection. |
+| `--delete-downloaded-ota` | Commands with `--ota-url` | `false`. Requests cleanup of the newly downloaded OTA after the operation. Does not remove an earlier archived OTA or a user-supplied local file. Requires `--ota-url`. |
+| `--vendor-mode auto\|bundled\|live` | Firmware-using commands | `auto`. On Athena, `auto` evaluates the live read-only `/vendor` and falls back to bundled factory vendor data as appropriate. Rook requires `bundled`; explicit `live` is rejected. `check` uses installed mode when set to `auto`. |
+| `--force-no-backup` | `update` only | `false`. Skip creation of the compressed archive backup; the previous runtime generation is still retained after an actual replacement. |
+| `--restart-techo5` | `install`, `update`, `rollback`, `uninstall` | `false`. Permits a **guarded** restart of a verified PID1-supervised TECHO5 daemon if necessary to release pinned runtime references. Not a general service restart switch. |
+| `--purge-backups` | `uninstall` only | `false`. Also remove installer-created backup archives; never purge factory extraction caches. |
+| `--generation NAME` | `rollback` only | **Required** for rollback. Exact saved generation name from the status information; not a file path. |
+| `--yes` | `install`, `update`, `rollback`, `uninstall` | `false`. Mandatory explicit authorization for each mutating command. Does not bypass safety checks. |
+| `--json` | Every command, including `status`, `version` | `false`. Structured JSON on stdout rather than human summary. The corresponding `COMMAND-json` alias is also recognized. |
 
-| Option | Applies to / behavior |
-| --- | --- |
-| `--ota FILE` | Select a local full OTA ZIP for `inspect`, `check`, `check-vendor`, `install`, or `update`. The original file is never deleted. |
-| `--ota-url URL` | Download a selected full OTA ZIP instead of using a local file. Mutually exclusive with `--ota`. |
-| `--firmware NAME` | Select a verified extracted cache by Amazon build, unambiguous Fire OS version, or exact cache directory name. Cannot be combined with `--ota` or `--ota-url`. |
-| `--cache-dir ABSOLUTE_PATH` | Override the factory extraction/OTA cache root (default `/data/techo5-linux/asp-installer-cache`). Also accepted by `status`. |
-| `--assets DIR` | Override the packaged asset directory (default `./assets`). |
-| `--platform athena\|rook` | Optional explicit platform check; must match the packaged release manifest. |
-| `--vendor-mode auto\|live\|bundled` | `auto` (default) selects live `/vendor` on Athena only when verified and read-only, otherwise a bundled private copy. Rook always uses `bundled`. |
-| `--ota-search-dir DIR` | Optional directory to search for previously saved local OTA candidates (default: `<cache-dir>/ota-images`). This option does **not** control download or temporary file placement. |
-| `--tmp-dir DIR` | Deprecated alias of `--ota-search-dir`, retained for compatibility. |
-| `--refresh-cache` | Force a fresh download/extraction instead of cached reuse; requires an explicit `--ota` or `--ota-url`. |
-| `--delete-downloaded-ota` | With `--ota-url`, delete the newly downloaded OTA after the command rather than retaining it. Does not delete previously saved/local OTA images. |
-| `--force-no-backup` | `update` only: skip the archive backup; the previous runtime generation is still retained. |
-| `--restart-techo5` | Mutations only: permit the guarded restart of a verified PID1-supervised TECHO5 daemon if required to release runtime references. |
-| `--purge-backups` | `uninstall` only: also remove recognized installer-created backup archives. Does **not** remove the factory cache. |
-| `--generation NAME` | Select a named generation from `status` for `rollback`. |
-| `--yes` | Explicit confirmation required for `install`, `update`, `rollback`, and `uninstall`. |
-| `--json` | Return machine-readable JSON on stdout for any command. |
+`status` accepts only `--cache-dir` and `--json`; `version` accepts only `--json`. `uninstall` and `rollback` also do not take OTA sources. In particular, `--ota`, `--ota-url`, and `--firmware` are mutually exclusive ways of selecting a firmware source for the five firmware-using commands. `--refresh-cache` requires an explicit OTA.
 
-`check-vendor` and `--vendor-mode live` are **not supported on Rook**. A cached firmware can be used without its complete OTA image as long as the extracted files verify and match the packaged helper; if several caches qualify, specify `--firmware` rather than allowing an ambiguous selection.
+Every invocation prints `asp-installer v...` and `asp-installer: Total elapsed: ...` to **stderr**, including on error. Normal results appear as readable text on stdout; with `--json`, stdout contains structured JSON (progress and elapsed time stay on stderr). `install/update` summaries report the deployment, rather than internal OTA format or cache-reuse diagnostics. No operation is automatically activated in TECHO5.
 
-## Factory firmware cache and OTA retention
-
-The persistent cache is independent of the installed runtime. Typical names are:
+## What is stored, and where
 
 ```text
-/data/techo5-linux/asp-installer-cache/
-├── athena-fireos-7574.1-build-PS75741-7080/
-│   ├── manifest.json
-│   ├── SHA256SUMS
-│   └── files/
-├── rook-fireos-5.5.6.9-build-690918120/
-│   ├── manifest.json
-│   ├── SHA256SUMS
-│   └── files/
-└── ota-images/
-    ├── athena-fireos-7574.1-build-PS75741-7080.bin
-    └── rook-fireos-5.5.6.9-build-690918120.bin
+/data/techo5-linux/
+├── asp-installer-v3/              # extracted FrankenASP release: installer and assets
+├── asp-installer-cache/          # verified factory artifact sets (separate from runtime)
+│   ├── PLATFORM-fireos-FIRE_OS_VERSION-build-AMAZON_BUILD/
+│   │   ├── manifest.json         # metadata, internal schema, source identity
+│   │   ├── SHA256SUMS            # per-file hashes
+│   │   └── files/               # selected factory files in system/ and vendor/ paths
+│   ├── PLATFORM-AMAZON_BUILD/    # possible when Fire OS marketing version unavailable
+│   ├── ...-variant-N/            # only if factory file contents genuinely differ
+│   ├── .cache.lock               # private cache lock
+│   └── ota-images/              # downloaded OTA archives (optional; not local input copies)
+├── external-asp/                 # installed runtime used by TECHO5
+├── .external-asp-generation-v3-.../  # previous managed runtime generation(s)
+├── asp-installer-backups/       # compressed installer backup archives (after updates/rollbacks)
+└── .asp-installer-v3.lock       # private mutation lock
 ```
 
-These names are examples, not bundled files. A distinct OTA or helper with the same build label gets a `-variant-N` cache directory. Cache reuse verifies the source/helper identity and every extracted file against SHA-256 records; cached `ready` means **verified files**, not that FrankenASP is active. `status` shows full paths, Fire OS version, Amazon build, file counts, and OTA integrity status. An original OTA file is **not required** once a compatible extraction is cached.
+- The **release package** (`asp-installer-v3`) contains the installer/launcher/helper, but not factory Amazon files. Replacing that package does not itself install or update `external-asp/`.
+- The **factory cache** is persistent and independent of the installed runtime. The internal manifest schema name is not part of the directory name. Reusing an extraction verifies `manifest.json`, `SHA256SUMS`, file contents and safe ownership/layout. A `ready` cache means its **files** verify, not that the audio helper is active.
+- The cache is **content-deduplicated** within each platform, Amazon build and Fire OS version: different source images, including OTA and backup, can yield the same factory file inventory and then use a single cache directory. If files differ, a numbered `-variant-N` is kept rather than silently overwriting distinct factory content. `--firmware` build or Fire OS values must resolve uniquely.
+- A **local OTA** passed with `--ota` stays at its original path and is not copied into `ota-images/`. When the installer **downloads** an OTA using `--ota-url`, completed archives are retained by default and temporary download files live under `ota-images/`. With `--delete-downloaded-ota`, that newly downloaded file is removed after use. Original OTA images are not needed once the extracted factory files are cached.
+- The runtime and backup directories are **installer-managed**. On update, the previous installed tree becomes a saved generation; a compressed backup archive is created unless expressly skipped. Rollback archives the installed runtime and retains the replaced generation. `uninstall` removes managed runtime trees but leaves the cache and, unless `--purge-backups` is requested, backup archives.
+- Interrupted operations may leave explicitly named staging or uninstall directories under `/data/techo5-linux/`; `status` reports incomplete operations and the installer refuses unsafe automatic cleanup.
 
-Incomplete OTA downloads are created as private temporary files inside `<cache-dir>/ota-images/` and removed after failed transfers; completed downloaded images are retained there under private, readable names. No temporary OTA files are created directly in `/data/techo5-linux/` by default. The OTA-search option only controls where previously saved local candidates are looked up.
+The desktop extractor stores its **own** cache by default on the PC. `deploy-cache` / `deploy-all` transfer one chosen verified factory set into the Echo's **fixed** `asp-installer-cache/`, without copying a full OTA or automatically installing the runtime.
 
-OTA downloads are retained in `ota-images/` by default. A local OTA can be copied to that private archive when sufficient disk space exists; if not, the verified extraction remains usable and the installer reports a warning. `uninstall` does **not** remove `asp-installer-cache/` or any OTA images. The optional `--purge-backups` removes **backups**, not the factory cache.
+## Maintenance examples
 
-Amazon build and Fire OS marketing version are separate values. The installer reads the marketing version from compatible OTA build properties, not from the Android OS version. Selecting `--firmware 5.5.6.9` works only if that version uniquely identifies a compatible cache; otherwise specify its exact Amazon build or `-variant-N` name.
-
-## Update, rollback, and uninstall
+From the Echo's installer directory, after disabling External ASP in TECHO5:
 
 ```sh
-# First disable External ASP in TECHO5 settings.
-./asp-installer check
-./asp-installer update --yes
+# Inspect current state and compare against a selected factory build:
+./asp-installer status
+./asp-installer check --firmware YOUR_AMAZON_BUILD
+
+# Update only if needed; installing again is not valid:
+./asp-installer update --firmware YOUR_AMAZON_BUILD --yes
 ./asp-installer status
 
-# To return to a previously saved generation:
-./asp-installer rollback --generation '.external-asp-generation-v3-YYYYMMDDTHHMMSSZ-XXXXXXXXXXXX' --yes
+# Read exact saved generation names from the JSON generations array:
+./asp-installer status --json
+./asp-installer rollback --generation YOUR_SAVED_GENERATION_NAME --yes
 
-# To remove the installed helper and saved generations, retaining cache/backups:
+# Remove all managed runtime generations, but retain factory files/backups:
 ./asp-installer uninstall --yes
 
-# Only when backup archives should also be removed:
+# Alternative to the uninstall command above (not an additional step):
+# also purge installer-created backup archives:
 ./asp-installer uninstall --yes --purge-backups
 ```
 
-The installer validates its **own** runtime files, lock file, cache, staging trees, and backup content; it does not impose ownership or mode requirements on pre-existing Android/TECHO5 parent directories. Mutations verify recognized runtimes and active process references, fail closed on unexpected files or pinned resources, and use guarded rename operations. Update normally creates a private archive backup and retains the former runtime as a generation. Rollback saves the replaced generation. Uninstall preserves the factory cache. Interrupted operations may require manual inspection rather than automatic destructive cleanup.
+An `update` that finds no differences does not replace the runtime. A rollback requires a previously retained generation and a recognized current installation. `uninstall` cannot be used to remove arbitrary unmanaged directories.
 
-## Compatible OTA images and disk space
+## Disk space, integrity and security
 
-Supported inputs are full Android block OTA ZIPs with known system/vendor ext4 layouts (including the Athena v4 and Rook v3 transfer-list formats), or supported full file-tree ZIPs. Incremental/patch-only OTA images, `payload.bin`, unsupported transfer operations and unknown layouts are rejected. The extractor reads only the required ELF dependency closure; full partition images are not reconstructed.
+Supported OTA inputs: known **full** Android block OTA ZIPs (including the supported block-transfer-list families for these models), or compatible full file-tree ZIPs. Unsupported layouts, incremental OTAs, unsupported operations and `payload.bin`-only packages are rejected. Extraction reads the required factory ELF/dependency closure; it does not reconstruct complete partition images for runtime installation.
 
-Disk preflight accounts for extraction cache, staged runtime, backup, OTA download, and a **64 MiB safety reserve per filesystem**. The 168 MiB extraction bound and separate 168 MiB staging bound are not estimates of the OTA size. For a URL download, the installer adds the actual HTTP Content-Length when available and checks free space during streaming.
+The installer reserves capacity for cache extraction, a staged runtime, backups and (if requested) downloads, with a **64 MiB filesystem safety reserve**. Extraction/runtime planning bounds are separate from the actual OTA transfer size; for network downloads HTTP `Content-Length`, when provided, is considered and free space is checked while downloading. OTA input is limited to **2 GiB**. All source inputs must be trusted by the owner; SHA-256 verifies local integrity but **does not authenticate Amazon provenance**. OTA signature authenticity is not verified. The current inherited HTTP downloader does **not validate HTTPS certificates/hostnames normally**, so independently verify the download source (or use a verified local OTA).
 
-**Source trust:** the OTA is owner-selected. Its SHA-256 protects cache integrity, **not vendor authenticity**. OTA signatures are not verified, and the download implementation accepts HTTPS certificates without normal certificate/hostname verification. Use only a source you trust and verify firmware provenance independently. Downloads have a 2 GiB size cap.
+Mutating operations require root, recognized installer-owned runtime files, safe private locks/staging, and checks for processes using the active helper. They fail on unexpected pinned resources rather than blindly removing them. `--restart-techo5` is opt-in and guarded. The installer does not impose its own ownership/mode policy on the Android/TECHO5-owned parent `/data/techo5-linux`.
 
-## Building the installer package
+## Building and testing the installer release
 
-With Go **1.26.9** and platform-specific ARM32 Linux launcher/Bionic helper build outputs available, from `common-tools/asp-installer/`:
+With **Go 1.26.9** and separately built, approved platform-specific launcher/Bionic helper binaries, from `common-tools/asp-installer/`:
 
 ```sh
 GO=/path/to/go1.26.9/bin/go ./build-release.sh \
@@ -172,9 +195,7 @@ GO=/path/to/go1.26.9/bin/go ./build-release.sh \
   /path/to/rook-output
 ```
 
-The script produces the matching `frankenasp-v<version>-<platform>-arm32.tar.gz` archive without proprietary Amazon files. Release versions are resolved automatically. Platform launcher and Bionic helper sources and build scripts are under `platforms/athena/` and `platforms/rook/`.
-
-For source validation:
+`build-release.sh` produces a platform/version-named archive with no Amazon proprietary files. It does not deploy to an Echo. Tests:
 
 ```sh
 cd common-tools/asp-installer
@@ -182,3 +203,5 @@ go test -count=1 ./...
 go test -race -count=1 ./...
 go vet ./...
 ```
+
+Maintainer release policy: [RELEASING.md](RELEASING.md). Desktop preparation and delivery: [ASP-EXTRACTOR.md](ASP-EXTRACTOR.md).

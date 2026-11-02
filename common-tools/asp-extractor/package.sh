@@ -17,6 +17,7 @@ mkdir -p "$tmp/$base"
 cp "$bin" "$tmp/$base/asp-extractor"
 cp "$root/LICENSE" "$tmp/$base/LICENSE"
 cp "$here/README.md" "$tmp/$base/README.md"
+cp "$root/docs/ASP-EXTRACTOR.md" "$tmp/$base/ASP-EXTRACTOR.md"
 chmod 0500 "$tmp/$base/asp-extractor"
 stamp=${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct)}
 tar --sort=name --owner=0 --group=0 --numeric-owner --format=ustar \

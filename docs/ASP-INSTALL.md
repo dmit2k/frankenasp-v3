@@ -8,7 +8,7 @@
 
 ## Prerequisites and installation boundary
 
-- Root shell on one of the supported Echo devices, with a compatible TECHO5 External ASP V3 host integration.
+- Root shell on one of the supported Echo devices, running a TECHO5 build with [External ASP V3 support](https://github.com/dmit2k/techo5/tree/experimental/external-asp-v3-pr-cleanup). The integration is proposed upstream in [PR #407](https://github.com/HuskerMinion/techo5/pull/407) and is not included in standard upstream releases while that PR remains unmerged.
 - The **matching** `frankenasp-vVERSION-PLATFORM-arm32.tar.gz` release archive (`PLATFORM` is `athena` or `rook`). The filename's release version is **not** an Amazon firmware build.
 - Either a complete compatible Amazon OTA ZIP selected by the owner or a verified, matching factory-extraction cache. Incremental/patch-only OTA packages are not supported.
 - Enough writable storage for extraction, an optional downloaded OTA and the required runtime staging/backup. See [Disk space and security](#disk-space-integrity-and-security).

@@ -40,9 +40,12 @@ Production ARM32 launcher and Bionic child are built separately using `platforms
 
 ## Install FrankenASP V3
 
-The [FrankenASP V3 installation guide](docs/ASP-INSTALL.md) explains the on-device **asp-installer** for both supported Echo models: selecting a full Amazon OTA, extracting and retaining verified factory files, choosing cached Fire OS builds, checking the deployed runtime, and installing, updating, rolling back or uninstalling the external ASP helper. The factory cache survives uninstall and can be reused without downloading or extracting the OTA again.
+There are **two ways to prepare and install FrankenASP V3**:
 
-The installer package contains only FrankenASP-owned binaries and configuration. **No proprietary Amazon firmware or binaries are distributed.** Installation requires root access, compatible TECHO5 External ASP integration, and an owner-provided OTA or valid local cache. See the [full command and option reference](docs/ASP-INSTALL.md) before changing an installed runtime.
+- **On-device (the lazy way):** Use `asp-installer` directly on the Echo to download or read a full Amazon OTA, extract the factory DSP files, and install the runtime. This is straightforward but **very slow and resource-intensive** on the Echo; plan for **more than 1 GB of free space on `/data`**, particularly when downloading and retaining the OTA. This is the practical option if you do not have a Linux desktop. See the [on-device installation guide](docs/ASP-INSTALL.md).
+- **Linux desktop + Echo (recommended):** Use `asp-extractor` on a Linux x86_64 computer for the resource-intensive OTA or TECHO5-backup processing. It can maintain a reusable **local library of verified factory firmware extracts across supported devices and firmware versions**, then deliver only the selected factory files and installer package to the Echo. Run `asp-installer` on the Echo to install or update the runtime. This avoids heavy extraction and storage demands on the device. See the [desktop extraction and deployment guide](docs/ASP-EXTRACTOR.md).
+
+Both workflows require a compatible TECHO5 External ASP integration, root access to the supported Echo, and factory files obtained from an owner-provided firmware source. **FrankenASP release packages do not include proprietary Amazon firmware or factory binaries.** Neither workflow automatically enables External ASP in TECHO5; select it manually after verifying the installed runtime.
 
 ## Built on TECHO5 — with genuine gratitude
 

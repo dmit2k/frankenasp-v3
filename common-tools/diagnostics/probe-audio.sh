@@ -1,90 +1,88 @@
 #!/bin/sh
-# FrankenASP V3: read-only capture and calibration-path availability probe.
-# Does not read calibration values, factory files, or user/device identifiers.
-# Run locally on a TECHO5 device: sh probe-audio.sh donut|cronos
-# Review all output before posting it publicly.
+# FrankenASP V3: generic read-only ALSA and calibration-path probe.
+# No audio capture, mixer changes, firmware reads or calibration values.
+# Run on a TECHO5 device: sh probe-audio.sh
+# Review the complete report before sharing it publicly.
 
-case "${1:-}" in
-    donut|cronos) platform=$1 ;;
-    *) printf 'Usage: sh %s donut|cronos\n' "$0" >&2; exit 2 ;;
-esac
-
-presence() {
-    if [ -e "$2" ]; then
-        printf '%s: present\n' "$1"
-    else
-        printf '%s: not visible\n' "$1"
-    fi
-}
+if [ "$#" -ne 0 ]; then
+    printf 'Usage: sh %s\n' "$0" >&2
+    exit 2
+fi
 
 printf 'FrankenASP V3 audio probe (read-only)\n'
-printf 'Platform (operator-supplied): %s\n' "$platform"
 printf 'Kernel release: %s\n' "$(uname -r)"
 printf 'CPU architecture: %s\n' "$(uname -m)"
 
 printf '\nALSA cards:\n'
 if [ -r /proc/asound/cards ]; then
-    sed -n '1,25p' /proc/asound/cards
+    sed -n '1,40p' /proc/asound/cards
 else
     printf 'not available\n'
 fi
+
 printf '\nALSA PCM devices:\n'
 if [ -r /proc/asound/pcm ]; then
-    sed -n '1,50p' /proc/asound/pcm
+    sed -n '1,80p' /proc/asound/pcm
 else
     printf 'not available\n'
 fi
 
-printf '\nExpected PCM device nodes (presence only):\n'
-if [ "$platform" = donut ]; then
-    presence 'MIC hw:0,1 capture' /dev/snd/pcmC0D1c
-    presence 'REF hw:0,7 capture' /dev/snd/pcmC0D7c
-    devices='1 7'
-else
-    presence 'MIC/REF hw:0,22 capture' /dev/snd/pcmC0D22c
-    devices='22'
+printf '\nCapture device nodes (presence only):\n'
+count=0
+for node in /dev/snd/pcmC[0-9]*D[0-9]*c; do
+    [ -e "$node" ] || continue
+    printf '  %s\n' "$node"
+    count=$((count + 1))
+done
+if [ "$count" -eq 0 ]; then
+    printf 'none visible\n'
 fi
 
-printf '\nActive ALSA capture parameters (no audio is recorded):\n'
-for device in $devices; do
-    path="/proc/asound/card0/pcm${device}c/sub0/hw_params"
-    printf 'hw:0,%s: ' "$device"
-    if [ ! -r "$path" ]; then
-        printf 'not available\n'
-        continue
-    fi
-    # Only allowlisted PCM geometry fields; no arbitrary proc contents.
-    found=no
+printf '\nCapture stream geometry (only currently opened streams report parameters):\n'
+count=0
+for path in /proc/asound/card[0-9]*/pcm[0-9]*c/sub[0-9]*/hw_params; do
+    [ -r "$path" ] || continue
+    count=$((count + 1))
+    printf '%s:\n' "${path#/proc/asound/}"
+    reported=no
+    # Allowlisted ALSA geometry only, never stream contents or owner PIDs.
     while IFS= read -r line; do
         case "$line" in
             'access: '*|'format: '*|'channels: '*|'rate: '*|'period_size: '*|'buffer_size: '*)
-                if [ "$found" = no ]; then
-                    printf '\n'
-                    found=yes
-                fi
                 printf '  %s\n' "$line"
+                reported=yes
                 ;;
         esac
     done < "$path"
-    if [ "$found" = no ]; then
-        printf 'closed or no geometry reported\n'
+    if [ "$reported" = no ]; then
+        printf '  closed or no active geometry\n'
     fi
 done
+if [ "$count" -eq 0 ]; then
+    printf 'not available\n'
+fi
 
-printf '\nFactory ASP visibility (presence only; unmounted partitions are not checked):\n'
-presence 'system libasp.so' /system/lib/libasp.so
-presence 'vendor libasp.so' /vendor/lib/libasp.so
-
-printf '\nMicrophone calibration paths (presence only; contents NEVER read):\n'
-for index in 0 1 2 3; do
-    found=no
-    for base in /proc/idme /proc/device-tree/idme /sys/firmware/devicetree/base/idme; do
-        if [ -e "$base/miccal.$index" ] || [ -e "$base/miccal.$index/value" ]; then
-            found=yes
+printf '\nKnown IDME microphone calibration paths (presence only; contents NOT read):\n'
+count=0
+for base in /proc/idme /proc/device-tree/idme /sys/firmware/devicetree/base/idme; do
+    for entry in "$base"/miccal.*; do
+        [ -e "$entry" ] || [ -L "$entry" ] || continue
+        name=${entry##*/}
+        index=${name#miccal.}
+        case "$index" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        # Some kernels expose a file or symlink, others a directory with /value.
+        if [ -d "$entry" ]; then
+            [ -e "$entry/value" ] || [ -L "$entry/value" ] || continue
         fi
+        printf '  %s/miccal.%s: present\n' "$base" "$index"
+        count=$((count + 1))
     done
-    printf 'miccal.%s: %s\n' "$index" "$found"
 done
+if [ "$count" -eq 0 ]; then
+    printf 'none visible in known IDME locations (not proof of absent calibration)\n'
+fi
 
-printf '\nNo files, partitions, or mixer settings were modified.\n'
-printf 'Inspect this report before sharing; NEVER post calibration values or factory binaries.\n'
+printf '\nNo capture devices were opened, and no files or mixer settings were changed.\n'
+printf 'Review the report before posting. Never share calibration values or factory files.\n'

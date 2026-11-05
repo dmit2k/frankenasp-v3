@@ -2,7 +2,7 @@
 
 Platform: **Echo Spot Gen 1 (rook)**, original Fire OS **5.5.6.9**, build **690918120**, ARM32 / Bionic API22.
 
-This is a standalone External ASP V3 implementation based on the Athena PCM-only bridge and the original Rook factory `libasp.so`. It replaces the earlier experimental GenericAFE frontend. It is not an acoustic-equivalence claim and has not yet been qualified on a physical Rook.
+This is a standalone External ASP V3 implementation based on the Athena PCM-only bridge and the original Rook factory `libasp.so`. It replaces the earlier experimental GenericAFE frontend. It is not an acoustic-equivalence claim: native startup and live processing have been exercised on a physical Rook, but controlled acoustic qualification is still in progress.
 
 ## Processing
 
@@ -51,4 +51,4 @@ The Bionic child requires the original `/system/bin/linker` and factory dependen
 
 ## Qualification status
 
-Laboratory evaluation uses the original pinned library and matched factory runtime in an isolated VM. Physical Rook qualification remains separate: real individual IDME use, MIC/REF mapping, playback timing, acoustic AEC/double-talk, latency/CPU/RSS, MWW/STT and long-term stability. No physical device deployment is authorized by this implementation.
+Laboratory evaluation uses the original pinned library and matched factory runtime in an isolated VM. Physical Rook qualification remains separate: real individual IDME use, MIC/REF mapping, playback timing, acoustic AEC/double-talk, latency/CPU/RSS, MWW/STT and long-term stability. Physical device startup and live-PCM stability have been checked; complete acoustic equivalence has not been established.

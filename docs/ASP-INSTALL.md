@@ -81,7 +81,7 @@ Run all commands from the installation directory as described above. `install`, 
 | --- | --- |
 | `version` | Prints the executing installer version; this is distinct from the installed FrankenASP revision and Amazon firmware build. |
 | `status` | Reports installed runtime files/revision/vendor mode, **counts** of saved generations and backups, incomplete operations, verified extraction sets and saved OTA images. Use `status --json` to obtain exact saved generation names for rollback. **Does not confirm that the helper is running or selected in TECHO5.** |
-| `inspect` | Checks an existing firmware cache or reads/extracts a full OTA into it. Does not install or change the runtime. |
+| `inspect` | Checks an existing firmware cache or reads/extracts a full OTA into it. Does not require release assets or a supported release manifest; platform identity is optional metadata. Does not install or change the runtime. |
 | `check` | Compares a recognized installed runtime against selected release assets and extracted factory dependencies, reporting whether an update is needed. |
 | `check-vendor` | Athena only: compares required factory vendor files with live `/vendor` and assesses whether `live` vendor mode is usable. |
 | `install --yes` | Creates a runtime only if the normal `external-asp/` installation is absent. |
@@ -98,8 +98,8 @@ The underlying CLI uses standard Go command-specific flags: put options **after 
 | `--ota FILE` | `inspect`, `check`, `check-vendor`, `install`, `update` | **Unset.** Path to an owner-provided local **full OTA ZIP** on the Echo. Read in place; never copied to the OTA archive or deleted. Exclusive with `--ota-url` and `--firmware`. |
 | `--ota-url URL` | Same five firmware-using commands | **Unset.** Download a full OTA from an explicitly supplied HTTP(S) URL. Exclusive with `--ota` and `--firmware`. Download retained by default. |
 | `--firmware NAME` | Same five firmware-using commands | **Unset.** Selects an existing extraction by Amazon build, uniquely matching Fire OS version, or exact directory name. With no OTA/source option, omission is allowed **only if precisely one compatible cache** exists for the release platform. Full OTA not needed. |
-| `--platform athena\|rook` | Commands using release assets | **Unset; inferred from `./assets/manifest.json`.** If explicitly set, must agree with the release. `check-vendor` works only on Athena. |
-| `--assets DIR` | Firmware-using commands | `./assets` (relative to current working directory). Must contain the correct release manifest and launcher/helper/channel map as appropriate. |
+| `--platform CODENAME` | Commands using release assets | **Unset.** Optional for factory-only inspect (detected from source metadata when present); for helper-bearing operations inferred from `./assets/manifest.json` and must agree with the release. `check-vendor` works only on Athena. |
+| `--assets DIR` | Firmware-using commands | `./assets` (relative to current working directory). Required for helper-bearing operations; inspect does not read release assets. Must contain the matching release manifest and launcher/helper/channel map for other operations. |
 | `--cache-dir DIR` | `status` and firmware-using commands | `/data/techo5-linux/asp-installer-cache` on Echo (derived from the fixed runtime deployment parent). Must be an absolute path, not `/`. |
 | `--ota-search-dir DIR` | Firmware-using commands | `<cache-dir>/ota-images`. **Only** a scan location for previously saved local OTA candidates when resolving a URL; not a download or temp directory. Requires an absolute, non-root path. |
 | `--tmp-dir DIR` | Firmware-using commands | **Unset.** Deprecated alias for `--ota-search-dir`, not a temp path. Cannot be combined with `--ota-search-dir`. |

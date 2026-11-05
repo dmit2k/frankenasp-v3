@@ -96,9 +96,11 @@ func runCLI(args []string) error {
 			}
 		}
 	}
-	if _, err := resolveCodename(o.platform, ""); err != nil {
+	normalizedPlatform, err := resolveCodename(o.platform, "")
+	if err != nil {
 		return err
 	}
+	o.platform = normalizedPlatform
 	if !filepath.IsAbs(o.cacheDir) || filepath.Clean(o.cacheDir) == "/" {
 		return errors.New("--cache-dir must be an absolute non-root directory")
 	}

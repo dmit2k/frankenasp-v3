@@ -130,9 +130,11 @@ func run() error {
 	if *restart && !mutating {
 		return errors.New("--restart-techo5 applies only to mutations")
 	}
-	if _, err := resolveCodename(*platform, ""); err != nil {
+	normalizedPlatform, err := resolveCodename(*platform, "")
+	if err != nil {
 		return err
 	}
+	*platform = normalizedPlatform
 	if cmd == "uninstall" || cmd == "rollback" {
 		if *ota != "" || *otaURL != "" {
 			return errors.New("OTA source not required for uninstall/rollback")

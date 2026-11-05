@@ -51,7 +51,7 @@ func TestPrivateFactoryClosure(t *testing.T) {
 			}
 			sources := &otaSources{platform: platform, system: testRoot{filepath.Join(root, "system")}, vendor: testRoot{filepath.Join(root, "vendor")}}
 			c := newCollector(sources)
-			if e := c.closure(platform); e != nil {
+			if e := c.closure(); e != nil {
 				t.Fatal(e)
 			}
 			if len(c.items) < 4 {

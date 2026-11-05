@@ -43,8 +43,21 @@ func newZipTree(z *zip.Reader, prefix string) *zipTree {
 	}
 	return &zipTree{z, prefix, m}
 }
-func (t *zipTree) name(p string) string          { return t.prefix + "/" + p }
-func (t *zipTree) Exists(p string) (bool, error) { _, ok := t.members[t.name(p)]; return ok, nil }
+func (t *zipTree) name(p string) string { return t.prefix + "/" + p }
+func (t *zipTree) Exists(p string) (bool, error) {
+	if _, ok := t.members[t.name(p)]; ok {
+		return true, nil
+	}
+	// ZIP archives may omit explicit directory records. Discover directories
+	// from child entries so config collection works for both ZIP layouts.
+	prefix := t.name(p) + "/"
+	for name := range t.members {
+		if strings.HasPrefix(name, prefix) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 func (t *zipTree) Read(p string) ([]byte, error) {
 	if !safePath(p) {
 		return nil, errors.New("unsafe path")

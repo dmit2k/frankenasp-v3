@@ -299,12 +299,59 @@ func (p prefixed) Files(s string) ([]string, error) {
 	}
 	return f, nil
 }
+
+// Decide whether the system partition is mounted at / or /system using the
+// actual filesystem. Both conventions exist in otherwise compatible ext4 OTAs.
+func configureSystemRoot(src *otaSources) error {
+	img, ok := src.system.(*image)
+	if !ok {
+		return nil
+	}
+	var root, nested bool
+	err := src.resolve(func() error {
+		var e error
+		nested, e = img.Exists("system/bin/linker")
+		if e != nil {
+			return e
+		}
+		if nested {
+			return nil
+		} // /bin can be a symlink on nested-root images.
+		root, e = img.Exists("bin/linker")
+		if e != nil {
+			return e
+		}
+		if root {
+			return nil
+		}
+		nested, e = img.Exists("system/build.prop")
+		if e != nil {
+			return e
+		}
+		if nested {
+			return nil
+		}
+		root, e = img.Exists("build.prop")
+		return e
+	})
+	if err != nil {
+		return err
+	}
+	if nested {
+		img.prefix = "system"
+	}
+	if !root && !nested {
+		return errors.New("system filesystem layout not recognized")
+	}
+	return nil
+}
+
 func openOTA(path, platform string) (*otaSources, *os.File, error) {
 	f, e := os.Open(path)
 	if e != nil {
 		return nil, nil, e
 	}
-	closeOnErr := func(e error) (*otaSources, *os.File, error) { f.Close(); return nil, nil, e }
+	closeOnErr := func(err error) (*otaSources, *os.File, error) { _ = f.Close(); return nil, nil, err }
 	st, e := f.Stat()
 	if e != nil {
 		return closeOnErr(e)
@@ -320,19 +367,17 @@ func openOTA(path, platform string) (*otaSources, *os.File, error) {
 		return closeOnErr(errors.New("too many OTA ZIP entries"))
 	}
 	var logicalBytes uint64
-	for _, f := range z.File {
-		logicalBytes += f.UncompressedSize64
+	members := map[string]*zip.File{}
+	for _, member := range z.File {
+		logicalBytes += member.UncompressedSize64
 		if logicalBytes > 8<<30 {
 			return closeOnErr(errors.New("OTA ZIP uncompressed inventory exceeds 8GiB"))
 		}
-	}
-	members := map[string]*zip.File{}
-	for _, member := range z.File {
 		name := strings.TrimSuffix(member.Name, "/")
 		if !safePath(name) {
 			return closeOnErr(errors.New("unsafe OTA ZIP path"))
 		}
-		if _, exists := members[member.Name]; exists {
+		if _, found := members[member.Name]; found {
 			return closeOnErr(errors.New("duplicate OTA ZIP member"))
 		}
 		if member.Flags&1 != 0 || member.Mode()&os.ModeSymlink != 0 {
@@ -340,44 +385,54 @@ func openOTA(path, platform string) (*otaSources, *os.File, error) {
 		}
 		members[member.Name] = member
 	}
-	meta := members["META-INF/com/android/metadata"]
-	if meta == nil || meta.UncompressedSize64 > 65536 {
-		return closeOnErr(errors.New("OTA metadata missing"))
-	}
-	mb, e := readZip(meta, 65536)
-	if e != nil {
-		return closeOnErr(e)
+	var mb []byte
+	if meta := members["META-INF/com/android/metadata"]; meta != nil {
+		mb, e = readZip(meta, 65536)
+		if e != nil {
+			return closeOnErr(e)
+		}
 	}
 	if bytes.Contains(mb, []byte("pre-build=")) || members["payload.bin"] != nil {
 		return closeOnErr(errors.New("incremental/payload OTA unsupported"))
 	}
+	detected, e := sourceCodename(metadataValue(mb, "post-device"), metadataValue(mb, "post-build"))
+	if e != nil {
+		return closeOnErr(e)
+	}
+	platform, e = resolveCodename(platform, detected)
+	if e != nil {
+		return closeOnErr(e)
+	}
 	out := &otaSources{platform: platform, firmware: firmwareLabel(metadataValue(mb, "post-build"), metadataValue(mb, "post-build-incremental"))}
-	block := members["system.transfer.list"] != nil
-	if !block {
+	if members["system.transfer.list"] == nil {
 		out.kind = "ZIP_FILE_TREE"
 		out.system = newZipTree(z, "system")
-		out.vendor = newZipTree(z, "vendor")
-		if platform == "rook" {
+		separateVendor := false
+		for name := range members {
+			if strings.HasPrefix(name, "vendor/") {
+				separateVendor = true
+				break
+			}
+		}
+		if separateVendor {
+			out.vendor = newZipTree(z, "vendor")
+		} else {
 			out.vendor = prefixed{parent: out.system, prefix: "vendor"}
 		}
 		return out, f, nil
 	}
 	parts := []string{"system"}
-	if platform == "athena" {
+	if members["vendor.transfer.list"] != nil {
 		parts = append(parts, "vendor")
 	}
 	for _, part := range parts {
-		tf := members[part+".transfer.list"]
-		if tf == nil {
-			return closeOnErr(fmt.Errorf("missing %s.transfer.list", part))
+		raw, err := readZip(members[part+".transfer.list"], 1<<20)
+		if err != nil {
+			return closeOnErr(err)
 		}
-		raw, e := readZip(tf, 1<<20)
-		if e != nil {
-			return closeOnErr(e)
-		}
-		plan, e := parseTransfer(raw)
-		if e != nil {
-			return closeOnErr(fmt.Errorf("%s: %w", part, e))
+		plan, err := parseTransfer(raw)
+		if err != nil {
+			return closeOnErr(fmt.Errorf("%s: %w", part, err))
 		}
 		if pd := members[part+".patch.dat"]; pd != nil && pd.UncompressedSize64 != 0 {
 			return closeOnErr(errors.New("incremental nonempty patch.dat"))
@@ -391,20 +446,20 @@ func openOTA(path, platform string) (*otaSources, *os.File, error) {
 		if member == nil {
 			return closeOnErr(fmt.Errorf("missing %s new.dat", part))
 		}
-		s := &selective{file: member, partition: part, plan: plan, size: int64(plan.blocks * blockSize), cache: map[uint64][]byte{}, pending: map[uint64]bool{}, compressedBrotli: isBr}
-		out.selective = append(out.selective, s)
-		prefix := ""
-		if platform == "athena" && part == "system" {
-			prefix = "system"
-		}
-		fs := &image{src: s, size: s.size, prefix: prefix}
+		reader := &selective{file: member, partition: part, plan: plan, size: int64(plan.blocks * blockSize),
+			cache: map[uint64][]byte{}, pending: map[uint64]bool{}, compressedBrotli: isBr}
+		out.selective = append(out.selective, reader)
+		img := &image{src: reader, size: reader.size}
 		if part == "system" {
-			out.system = fs
+			out.system = img
 		} else {
-			out.vendor = fs
+			out.vendor = img
 		}
 	}
-	if platform == "rook" {
+	if e := configureSystemRoot(out); e != nil {
+		return closeOnErr(e)
+	}
+	if out.vendor == nil {
 		out.vendor = prefixed{parent: out.system, prefix: "vendor"}
 	}
 	out.kind = fmt.Sprintf("ZIP_FULL_BLOCK_v%d", out.selective[0].plan.version)

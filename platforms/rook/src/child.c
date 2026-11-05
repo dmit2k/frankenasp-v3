@@ -1,115 +1,64 @@
-/* PCM-only ASP1 child: private factory runtime, no Android service registration. */
-#include "vendor.h"
-#include "descriptor.h"
+/* PCM-only child: stdin descriptor + immutable blocks, stdout only PCM. */
 #include "io.h"
+#include "runtime.h"
+#ifdef ASP_BIONIC
 #include "bionic_compat.h"
-
-#define BLOCK_FRAMES 320u
-#define BLOCK_BYTES (BLOCK_FRAMES * 18u)
-#define OUTPUT_BYTES 640u
-static void diagnostic(const char *message) {
-    (void)asp_write_exact(2, (const uint8_t *)message, strlen(message));
-}
-static int calibration(i32 gains[4]) {
-    for (unsigned i = 0; i < 4; ++i) {
-        char path[] = "/proc/idme/miccal.0";
-        path[sizeof(path) - 2] = (char)('0' + i);
-        int fd = open(path, O_RDONLY | O_CLOEXEC);
-        if (fd < 0) return -1;
-        char data[32];
-        long n = read(fd, data, sizeof(data));
-        int closed = close(fd);
-        if (closed || n < 1 || n >= (long)sizeof(data)) return -1;
-        usize at = 0;
-        i64 v = 0;
-        while (at < (usize)n && data[at] >= '0' && data[at] <= '9') {
-            v = v * 10 + data[at++] - '0';
-            if (v > 2147483647LL) return -1;
-        }
-        if (!at) return -1;
-        while (at < (usize)n && (data[at] == 0 || data[at] == '\n')) ++at;
-        if (at != (usize)n || v <= 0) return -1;
-        if (((u32)v & 0x7fff0000U) == 0) v <<= 16;
-        if (v <= 0 || v > 2147483647LL) return -1;
-        gains[i] = (i32)v;
-    }
-    return 0;
-}
-static int admitted(const asp_descriptor *d) {
-    if (d->buffer_count != 1 || d->channel_count != 6 ||
-        d->input_bytes != BLOCK_BYTES) return -1;
-    const asp_buffer *b = &d->buffers[0];
-    if (b->offset || b->length != BLOCK_BYTES || b->sample_rate != 16000 ||
-        b->frames != BLOCK_FRAMES || b->stride != 18 ||
-        b->format != 2 || b->valid_bits != 24 || b->lsb_shift ||
-        b->channels != 6 || b->first_channel) return -1;
-    for (unsigned i = 0; i < 6; ++i) {
-        const asp_channel *c = &d->channels[i];
-        if (c->buffer_index || c->frame_offset != 3 * i ||
-            c->role != (i < 4 ? 1 : 2) ||
-            c->role_index != (i < 4 ? i : i - 4)) return -1;
-    }
-    return 0;
-}
+#else
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#endif
+static void diagnostic(const char *s) { (void)asp_write_exact(2,(const uint8_t*)s,strlen(s)); }
 int main(int argc, char **argv) {
     (void)argv;
-    if (argc != 1) return 2;
+    if (argc != 1) { diagnostic("asp1: no CLI arguments accepted\n"); return 2; }
     int wire = dup(1);
-    if (wire < 0 || dup2(2, 1) < 0) return 2;
-    uint8_t *encoded = 0;
-    usize encoded_bytes = 0;
-    asp_descriptor desc;
-    i32 gains[4];
-    int rc = 2;
-    int started = 0;
-    if (asp_read_fd(0, &encoded, &encoded_bytes) ||
-        asp_decode(encoded, encoded_bytes, &desc) ||
-        admitted(&desc) || calibration(gains)) {
-        diagnostic("rook: invalid descriptor or unavailable authentic calibration\n");
-        goto done;
+    if (wire < 0 || dup2(2, 1) < 0) {
+        diagnostic("asp1: stdout isolation failure\n"); return 2;
     }
-    if (rook_factory_open()) {
-        diagnostic("rook: factory resources or ABI rejected\n");
-        goto done;
+    int rc = 2, started = 0;
+    uint8_t *descriptor_bytes = NULL, *input = NULL;
+    size_t length = 0;
+    asp_descriptor d;
+    asp_runtime runtime;
+    factory_abi abi;
+    if (asp_read_fd(0, &descriptor_bytes, &length) || asp_decode(descriptor_bytes, length, &d)) {
+        diagnostic("asp1: invalid PCM-only descriptor\n"); goto done;
+    }
+    if (asp_admit(&d, &runtime)) {
+        diagnostic("asp1: unsupported factory PCM geometry\n"); goto done;
+    }
+    if (asp_vendor_load(&abi)) {
+        diagnostic("asp1: factory library binding failed before READY\n");
+        goto done_vendor;
+    }
+    if (asp_runtime_open(&runtime, &abi)) {
+        diagnostic("asp1: factory pipeline/provider initialization failed before READY\n");
+        goto done_vendor;
     }
     started = 1;
-    if (asp_write_exact(wire, (const uint8_t[]){ASP_READY_BYTE}, 1)) goto done;
-    uint8_t input[BLOCK_BYTES];
-    uint8_t quantum[ROOK_CAPTURE_BYTES];
-    i16 output_fifo[640] = {0};
-    i16 result[ROOK_QUANTUM];
-    unsigned pending = 0, available = 64; /* Exactly one 4-ms FIFO pad. */
-    for (;;) {
-        int got = asp_read_exact(0, input, BLOCK_BYTES);
-        if (got == 0) { rc = 0; break; }
-        if (got < 0) { diagnostic("rook: truncated PCM\n"); break; }
-        for (unsigned frame = 0; frame < BLOCK_FRAMES; ++frame) {
-            memcpy(quantum + pending * 18, input + frame * 18, 18);
-            if (++pending == ROOK_QUANTUM) {
-                if (available > 512 ||
-                    rook_factory_process(quantum, gains, result)) {
-                    diagnostic("rook: factory DSP processing failed\n");
-                    goto done;
-                }
-                memcpy(output_fifo + available, result, sizeof(result));
-                available += ROOK_QUANTUM;
-                pending = 0;
-            }
-        }
-        if (available < BLOCK_FRAMES) goto done;
-        uint8_t packet[OUTPUT_BYTES];
-        for (unsigned i = 0; i < BLOCK_FRAMES; ++i) {
-            u16 value = (u16)output_fifo[i];
-            packet[2*i] = (u8)value;
-            packet[2*i+1] = (u8)(value >> 8);
-        }
-        if (asp_write_exact(wire, packet, OUTPUT_BYTES)) goto done;
-        available -= BLOCK_FRAMES;
-        memmove(output_fifo, output_fifo + BLOCK_FRAMES, available * sizeof(i16));
+    input = malloc(d.input_bytes);
+    if (!input) { diagnostic("asp1: input buffer allocation failed\n"); goto done_vendor; }
+    {
+        uint8_t ready = ASP_READY_BYTE;
+        if (asp_write_exact(wire, &ready, 1)) goto done_vendor;
     }
+    for (;;) {
+        int got = asp_read_exact(0, input, d.input_bytes);
+        if (!got) { rc = 0; break; }
+        if (got < 0) { diagnostic("asp1: truncated input PCM\n"); break; }
+        uint8_t output[ASP_OUTPUT_BYTES];
+        if (asp_step(&runtime, input, output) ||
+            asp_write_exact(wire, output, ASP_OUTPUT_BYTES)) {
+            diagnostic("asp1: vendor process or PCM write failure\n"); break;
+        }
+    }
+done_vendor:
+    if (started && asp_runtime_close(&runtime)) rc = 2;
+    asp_vendor_unload();
 done:
-    if (started && rook_factory_close()) rc = 2;
-    if (encoded) free(encoded);
-    close(wire);
+    free(input);
+    free(descriptor_bytes);
+    (void)close(wire);
     return rc;
 }

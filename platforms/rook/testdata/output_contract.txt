@@ -1,0 +1,1 @@
+mono S16LE 16000 Hz 320 samples 20 ms 640 bytes

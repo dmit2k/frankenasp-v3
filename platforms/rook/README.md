@@ -1,74 +1,54 @@
-# Echo Spot 1st generation (`rook`)
+# Rook — Native Factory ASP V3
 
-This implementation uses an owner-provided ARM32 Bionic factory runtime.
-It does not pin OTA versions, manufacturer library checksums or exact DSP
-function addresses. The runtime must still contain a compatible internal DSP
-interface: changed private vtable layout or buffer ABI may require an adapter
-update. Incompatible runtime resources fail before READY where detectable.
+Platform: **Echo Spot Gen 1 (rook)**, original Fire OS **5.5.6.9**, build **690918120**, ARM32 / Bionic API22.
 
-## PCM / TECHO5 contract
+This is a standalone External ASP V3 implementation based on the Athena PCM-only bridge and the original Rook factory `libasp.so`. It replaces the earlier experimental GenericAFE frontend. It is not an acoustic-equivalence claim and has not yet been qualified on a physical Rook.
 
-- Input: ASP1 PCM-only descriptor, one interleaved buffer per exchange,
-  320 frames at 16 kHz, six packed signed 24-bit channels (5,760 bytes).
-- Channels: four physical MIC channels (slots 0–3) and two hardware REF
-  channels (slots 4–5). Physical channel polarity, order and reference
-  timing require acoustic qualification on the target device.
-- Output: one A5 READY byte followed by 640 bytes of mono PCM16 per input
-  block. The first 20-ms block includes an initial 64-sample FIFO pad.
-- Factory processing: 128-frame quanta, direct internal `GenericAFE` path,
-  stereo REF upsampling from 16 to 48 kHz, and factory mode-7 transport
-  metadata stripped from the output PCM LSBs.
-- Calibration: the helper reads authenticated device-specific `miccal.0..3`
-  through `/proc/idme/`, applies the validated Q30 gains to captured
-  microphones exactly once, and never stores or logs those values. Missing
-  calibration prevents startup.
+## Processing
 
-The helper has no mute detection, PCM-output censorship or privacy policy.
-TECHO5 applies SoftwareCut at the capture boundary. Already-captured PCM,
-including DSP-delayed frames, remains valid output after a mute transition.
+- Input: one 92-byte ASP1 descriptor and one 5760-byte PCM buffer per exchange, 320 frames, six **interleaved S24_3LE** channels at 16 kHz.
+- Capture slots: MIC0–MIC3 followed by REF0–REF1, with offsets 0/3/6/9/12/15. All other geometries are rejected before READY.
+- Accumulate unmodified raw frames into consecutive 128-frame (8 ms) factory quanta.
+- Factory codec (private ABI of the pinned library) converts the original REF 4–5 into stereo PCM16; the registered native RefProvider writer receives 128 frames before the corresponding public ASR call.
+- `asp_process` receives the **original six-channel packed PCM24**, without helper-side MIC calibration, channel permutation, FIR filtering, resampling or gain changes.
+- The original library owns MIC calibration, AEC, beamforming and the REF 16→48 kHz resampler. The launcher only exposes the four authentic readonly `/proc/idme/miccal.*` paths.
+- Public PipelineAsr returns 128 mono PCM16 samples per quantum. A continuous FIFO re-packetizes them as 320 PCM16 samples (640 bytes) per exchange, with one initial 64-sample zero pad. There is no recurring pad or tail packet.
+- REF push and processing use the same monotonically increasing 8 ms timestamp. Factory output is returned with its original LSB.
 
-The existing TECHO5 native capture and ASP1 wire protocol are used unchanged.
-No platform-specific changes to TECHO5 are required for the qualified capture
-geometry. The factory route differs from athena; the public rook `asp_process`
-path did not receive an effective playback reference in offline experiments.
+The pinned private ABI is supported only for SHA-256 `3258e6555b460a7b6a13e470a7f68b8359ceadf66fb4930f331c89d3bd33fb59` of `/system/lib/libasp.so`. Other libraries are rejected before READY; requalification is required for different firmware.
 
-## Original runtime and build
+## Runtime and trust boundary
 
-Prepare a **private**, internally compatible ARM32 Bionic runtime extracted from your own
-rook firmware or backup. Do not place factory libraries, firmware, calibration
-or private runtime material in Git. The helper uses original
-`/system/bin/linker`, `/system/lib/libasp.so` and its complete dependencies,
-and `/vendor/etc/audio-algorithms/` including `AFE.cfg` and coefficient files.
+The independent Linux ARM32 launcher retains Athena's authenticated FD3/FD4 deployment boundary, fixed private root, readonly stock `/system` and matched `/vendor`, IDME aliases, and no-fork execution. Rook uses `/system/bin/linker`, `/system/lib/libasp.so`, `/vendor/etc/audio-algorithms/AFE.cfg` and the original coefficient files. On kernel 4.9 it uses the checked `getrlimit`/`fcntl` CLOEXEC fallback rather than assuming `close_range`.
 
-Compile from this platform directory with an ARM32 cross-toolchain. Set
-`OUT_DIR` outside the checkout, `BIONIC_CC`, `BIONIC_LD`, `BIONIC_ROOT` and
-optionally `BIONIC_BINUTILS` for the helper; use `ARM32_CC`,
-`ARM32_SYSROOT` and optionally `ARM32_BINUTILS` for the static Linux launcher.
+TECHO5 owns ASP selection, supervision, SoftwareCut and fallback; the child never re-mutes an in-flight frame or mixes factory and built-in outputs. Factory failures are terminal to the child.
+
+## Building and tests
+
+From this directory:
 
 ```sh
-bash build_bionic.sh
-bash build_launcher.sh
 make test
-make sanitize
+make asan
+make ubsan
 ```
 
-The build links against original *user-supplied* Bionic API-22 objects; it
-never embeds proprietary files. The launcher requires the established FD3/FD4
-TECHO5 session entry, a root-owned private installation tree and a bundled,
-owner-selected system/vendor source pair. It does not use the device's older
-live vendor configuration. Build and native tests do not mount or modify a
-running device.
+For target binaries, provide a matching owner-selected stock Rook runtime and an ARM32 toolchain. Both outputs must be outside the source checkout:
 
-## Hardware validation and limitations
+```sh
+OUT_DIR=/private/rook-child \
+BIONIC_CC=/path/to/arm-linux-gnueabihf-gcc \
+BIONIC_LD=/path/to/arm-linux-gnueabihf-ld \
+BIONIC_ROOT=/path/to/rook-factory-runtime ./build_bionic.sh
 
-The rook helper has been built, deployed and tested on a **physical Echo Spot
-(1st generation, 2017)** with TECHO5 External ASP and the original factory DSP. On-device tests have exercised the secure launcher, isolated Bionic
-runtime and PCM processing; the External ASP path has also run in a live
-TECHO5 session. Native tests and a full-system offline VM were used in
-addition to, not instead of, device testing.
+OUT_DIR=/private/rook-launcher \
+ARM32_CC=/path/to/arm-linux-gnueabihf-gcc \
+ARM32_SYSROOT=/path/to/arm32-glibc-sysroot \
+ARM32_BINUTILS=/path/to/binutils-wrapper-dir ./build_launcher.sh
+```
 
-This confirms hardware operation on the tested Spot, not exhaustive acoustic
-qualification (for example, false-wake rates or voice quality in all
-conditions). The maintainer does not have other Echo models available for
-adaptation or hardware validation. Other models are neither supported nor
-claimed compatible without their own device-specific work and testing.
+The Bionic child requires the original `/system/bin/linker` and factory dependency closure. Target build success alone does not prove that factory DSP is usable; verify against the original factory runtime in an isolated ARM32 full-system VM.
+
+## Qualification status
+
+Laboratory evaluation uses the original pinned library and matched factory runtime in an isolated VM. Physical Rook qualification remains separate: real individual IDME use, MIC/REF mapping, playback timing, acoustic AEC/double-talk, latency/CPU/RSS, MWW/STT and long-term stability. No physical device deployment is authorized by this implementation.

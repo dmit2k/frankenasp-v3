@@ -56,6 +56,16 @@ func TestFactoryCacheWithAbsentAndUnlistedPlatform(t *testing.T) {
 	}
 }
 
+func TestUnknownCodenameNormalization(t *testing.T) {
+	codename, err := resolveCodename("9_Unknown-Model", "9_unknown-model")
+	if err != nil || codename != "9_unknown-model" {
+		t.Fatalf("generic codename normalization: %q, %v", codename, err)
+	}
+	if displayPlatform(codename) != codename {
+		t.Fatal("unknown detected codename hidden from inspection")
+	}
+}
+
 func TestZipTreeDetectsImplicitAudioConfigDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "factory.zip")
 	f, err := os.Create(path)

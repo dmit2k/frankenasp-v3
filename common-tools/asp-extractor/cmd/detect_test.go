@@ -55,6 +55,7 @@ func TestOTAPlatformDetectionIndependentOfPartitionLayout(t *testing.T) {
 		{"Amazon/rook/rook:5.1/test", false, "rook"},
 		{"Amazon/rook/rook:5.1/test", true, "rook"},
 		{"Amazon/new/new_model:9/test", false, "new_model"},
+		{"Amazon/new/9_model:9/test", false, "9_model"},
 		{"", false, ""},
 	} {
 		dir := t.TempDir()

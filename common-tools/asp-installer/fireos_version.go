@@ -101,6 +101,9 @@ func displayPlatform(platform string) string {
 	case "athena":
 		return "Echo Show 8 (2nd Gen, 2021) [athena]"
 	default:
+		if platform != "" {
+			return platform
+		}
 		return "unidentified"
 	}
 }

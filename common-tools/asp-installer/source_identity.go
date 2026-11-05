@@ -8,7 +8,7 @@ import (
 )
 
 // A device codename is provenance metadata, not an extraction profile.
-var codenamePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,47}$`)
+var codenamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,47}$`)
 
 func normalizedCodename(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
@@ -43,8 +43,12 @@ func sourceCodename(explicit, fingerprint string) (string, error) {
 }
 
 func resolveCodename(requested, detected string) (string, error) {
-	if requested != "" && normalizedCodename(requested) != requested {
-		return "", fmt.Errorf("invalid --platform %q", requested)
+	if requested != "" {
+		normalized := normalizedCodename(requested)
+		if normalized == "" {
+			return "", fmt.Errorf("invalid --platform %q", requested)
+		}
+		requested = normalized
 	}
 	if detected != "" && requested != "" && requested != detected {
 		return "", fmt.Errorf("--platform %s conflicts with source platform %s", requested, detected)

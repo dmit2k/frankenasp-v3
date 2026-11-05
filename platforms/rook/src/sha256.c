@@ -1,4 +1,11 @@
 #include "sha256.h"
+#ifdef ASP_BIONIC
+/* ARM32 Linux O_NOFOLLOW is 0100000; 0400000 is O_LARGEFILE. */
+#undef O_NOFOLLOW
+#define O_NOFOLLOW 0100000
+_Static_assert(O_RDONLY == 0 && O_CLOEXEC == 02000000 &&
+               O_NOFOLLOW == 0100000, "ARM32 open flags");
+#endif
 struct Sha {u32 s[8];u64 bytes;u8 block[64];u32 n;};
 static const u32 K[64]={
 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,

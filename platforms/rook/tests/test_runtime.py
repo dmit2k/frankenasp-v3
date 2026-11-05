@@ -31,13 +31,25 @@ def block(mic=(1024, -12345, 8388607, -8388608), ref=(111, -222)):
     frame = b''.join(pack24(x) for x in mic)
     frame += b''.join(pack24(x * 256) for x in ref)
     return frame * 320
-def case(desc, blocks=(), fault=None, resource=True, fragment=False, inject=False):
+def sample24(frame, ch):
+    edge = (0, 1, 255, 256, 0x7fffff, 0x800000, 0xffff00, 0xffffff)
+    if frame % 37 < 8:
+        return edge[(frame + ch) % 8]
+    return (frame * 104729 + ch * 99991 + 0x123457) & 0xffffff
+def sequence_block(exchange):
+    return b''.join(pack24(sample24(exchange * 320 + f, ch))
+                    for f in range(320) for ch in range(6))
+def case(desc, blocks=(), fault=None, resource=True, fragment=False, inject=False,
+         sequence=False):
     with tempfile.TemporaryDirectory(prefix='rook-asp1-test-') as tmp:
         path = pathlib.Path(tmp) / 'factory-resource'
         if resource:
             path.write_bytes(b'mock runtime sentinel')
         env = os.environ.copy()
         env['ASP1_TEST_RESOURCE'] = str(path)
+        env.pop('ASP1_TEST_SEQUENCE', None)
+        if sequence:
+            env['ASP1_TEST_SEQUENCE'] = '1'
         if fault:
             env['ASP1_TEST_FAULT'] = fault
         else:
@@ -68,7 +80,7 @@ def must(yes, what):
 good = descriptor()
 must(len(good) == 92, 'exact 92-byte ASP1 descriptor')
 n = 311  # 777 factory quanta, includes multiple timestamp second boundaries.
-rc, out, err = case(good, [block()] * n)
+rc, out, err = case(good, [sequence_block(i) for i in range(n)], sequence=True)
 must(rc == 0 and len(out) == 1 + 640 * n and out[0] == 0xa5, 'READY/output length')
 samples = struct.unpack('<' + str(320*n) + 'h', out[1:])
 expected = [0]*64 + [101 + q%1000 for q in range((320*n)//128) for _ in range(128)]
@@ -77,6 +89,20 @@ must('mock vendor stdout chatter' in err and b'mock' not in out, 'stdout isolati
 quantum = (320*n)//128
 must(f'push={quantum} process={quantum} unregister=1 destroy=1 deinit=1' in err,
      'native writer and factory exactly once, ordered sequential quanta')
+# Mutations in the independently generated stream must be terminal.
+for change in ('swapped-channels', 'duplicated-frame', 'lost-frame'):
+    bad = bytearray(sequence_block(0))
+    if change == 'swapped-channels':
+        bad[0:3], bad[3:6] = bad[3:6], bad[0:3]
+    elif change == 'duplicated-frame':
+        bad[18:36] = bad[0:18]
+    else:
+        bad[17*18:18*18] = bad[18*18:19*18]
+    rc, corrupt, _ = case(good, [bytes(bad)], sequence=True)
+    must(rc != 0 and corrupt == b'\xa5', 'PCM order mutation rejection: ' + change)
+for fault in ('codec-unpack-address', 'codec-pack-offset', 'codec-corrupt'):
+    rc, corrupt, _ = case(good, [sequence_block(0)], fault=fault, sequence=True)
+    must(rc != 0 and corrupt == b'\xa5', 'codec address/REF oracle fault: ' + fault)
 for spec in (dict(rate=48000), dict(frames=128), dict(fmt=3), dict(shift=1),
              dict(stride=21), dict(ref=False), dict(bad_order=True)):
     rc, out, _ = case(descriptor(**spec))
@@ -131,4 +157,4 @@ with tempfile.TemporaryDirectory() as tmp:
     proc.stdin.close()
     proc.stderr.close()
     must(proc.wait(timeout=10)!=0,'broken stdout pipe is terminal')
-print('ROOK RUNTIME PASS: strict geometry, long PCM/FIFO, native writer ordering, timestamps, fault cleanup, I/O')
+print('ROOK RUNTIME PASS: geometry, 311 varying exchanges / 777 quanta, codec addresses, independent REF, PCM mutations, FIFO, timestamps, cleanup, I/O')

@@ -10,10 +10,19 @@ static uint8_t pipeline[0x140] __attribute__((aligned(16)));
 static uintptr_t provider_vtable[8],provider[1];
 static rook_writer32 *active_writer;
 static uint8_t raw_snapshot[2304];
-static int32_t planar[768];
-static int16_t stereo[256];
 static int32_t last_sec,last_nsec;
 static int phase;
+static uint32_t sample24(uint64_t frame,unsigned ch) {
+ static const uint32_t edge[]={0,1,255,256,0x7fffff,0x800000,0xffff00,0xffffff};
+ if(frame%37u<8u) return edge[(frame+ch)%8u];
+ return (uint32_t)((frame*104729u+ch*99991u+0x123457u)&0xffffffu);
+}
+/* Host descriptors carry ARM32 addresses: resolve only the known live buffer. */
+static void *codec_data(uint32_t address,const void *expected) {
+ uintptr_t full=(uintptr_t)expected;
+ if(!address || address!=(uint32_t)full || (full&15u)) {phase=-1;return NULL;}
+ return (void*)((full&~(uintptr_t)UINT32_MAX)|(uintptr_t)address);
+}
 static int fail(const char *s) {
  const char *v=getenv("ASP1_TEST_FAULT");return v && !strcmp(v,s);
 }
@@ -36,26 +45,37 @@ static int32_t mock_sync(void *p,int32_t s) {
 }
 static void mock_unpack(uint32_t d[8],const void *p,uint32_t fmt) {
  if(fmt!=6 || d[0] || d[1]!=6 || d[2]!=128 || d[3] ||
-    d[4]!=128 || d[5] || d[6] || !d[7]){phase=-1;return;}
+    d[4]!=128 || d[5] || d[6] || !active_writer){phase=-1;return;}
+ factory_adapter *a=(factory_adapter*)((uint8_t*)active_writer-
+                                    __builtin_offsetof(factory_adapter,writer));
+ if(fail("codec-unpack-address")) d[7]^=16u;
+ int32_t *plane=codec_data(d[7],a->planar.data);
+ if(!plane) return;
  memcpy(raw_snapshot,p,sizeof(raw_snapshot));
  for(unsigned frame=0;frame<128;frame++)
   for(unsigned ch=0;ch<6;ch++) {
    const uint8_t *b=raw_snapshot+frame*18u+ch*3u;
    uint32_t u=(uint32_t)b[0] | (uint32_t)b[1]<<8 | (uint32_t)b[2]<<16;
-   if(u & 0x800000)u|=0xff000000;
-   planar[ch*128u+frame]=(int32_t)u;
+   if(getenv("ASP1_TEST_SEQUENCE") &&
+      u!=sample24((uint64_t)process_n*128u+frame,ch)) {phase=-1;return;}
+   plane[ch*128u+frame]=(int32_t)(u<<8);
   }
 }
 static void mock_pack(uint32_t d[8],void *p,uint32_t fmt) {
- if(fmt!=1 || d[0] || d[1]!=2 || d[2]!=128 || d[3] ||
-    d[4]!=128 || d[5] || d[6] || !d[7]){phase=-1;return;}
+ if(phase<0 || fmt!=1 || d[0] || d[1]!=2 || d[2]!=128 || d[3] ||
+    d[4]!=128 || d[5] || d[6] || !active_writer){phase=-1;return;}
+ factory_adapter *a=(factory_adapter*)((uint8_t*)active_writer-
+                                    __builtin_offsetof(factory_adapter,writer));
+ if(p!=a->reference.data){phase=-1;return;}
+ if(fail("codec-pack-offset")) d[7]+=4u;
+ const int32_t *plane=codec_data(d[7],a->planar.data+4*128);
+ if(!plane) return;
  int16_t *out=p;
  for(unsigned frame=0;frame<128;frame++)
   for(unsigned ch=0;ch<2;ch++) {
-   int32_t v=planar[(ch+4u)*128u+frame];
-   out[frame*2u+ch]=(int16_t)(v>=0?v/256:-((-(int64_t)v+255)/256));
+   out[frame*2u+ch]=(int16_t)((uint32_t)plane[ch*128u+frame]>>16);
   }
- memcpy(stereo,out,sizeof(stereo));
+ if(fail("codec-corrupt")) out[0]^=1;
 }
 static int32_t mock_reg(void *p,rook_writer32 *w) {
  ++reg_n;
@@ -70,7 +90,17 @@ static int32_t mock_push(void *p,rook_writer32 *w,const int16_t *s,
  if(p!=provider || w!=active_writer || frames!=128 || flags || sidecar ||
     sec!=(int32_t)((push_n-1)/125u) ||
     nsec!=(int32_t)(((push_n-1)%125u)*8000000u) ||
-    memcmp(s,stereo,sizeof(stereo)) || phase<0 || fail("push"))return -1;
+    phase<0 || fail("push"))return -1;
+ /* Independent packed24 REF oracle; never compare with mock_pack's output. */
+ for(unsigned frame=0;frame<128;frame++)
+  for(unsigned ch=0;ch<2;ch++) {
+   const uint8_t *b=raw_snapshot+frame*18u+(ch+4u)*3u;
+   uint32_t u=(uint32_t)b[0] | (uint32_t)b[1]<<8 | (uint32_t)b[2]<<16;
+   int32_t signed24=(u&0x800000u)?(int32_t)u-0x1000000:(int32_t)u;
+   int16_t want=(int16_t)(signed24>=0 ? signed24/256 :
+                         -((-(int64_t)signed24+255)/256));
+   if(s[frame*2u+ch]!=want) return -1;
+  }
  last_sec=sec;last_nsec=nsec;phase=1;return 0;
 }
 static int32_t mock_process(void *p,const void *raw,uint32_t *ni,void *out,

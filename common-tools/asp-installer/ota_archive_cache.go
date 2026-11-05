@@ -217,7 +217,7 @@ func cacheForURLFilename(ctx context.Context, base, platform, rawURL string) (ca
 	}
 	candidates := []cacheResult{}
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), platform+"-") {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || entry.Name() == otaImageDir {
 			continue
 		}
 		p := filepath.Join(base, entry.Name())
@@ -229,7 +229,7 @@ func cacheForURLFilename(ctx context.Context, base, platform, rawURL string) (ca
 		if json.Unmarshal(metaRaw, &meta) != nil {
 			continue
 		}
-		if meta.Schema != cacheSchema || meta.Platform != platform || meta.OriginalOTAName != filename {
+		if meta.Schema != cacheSchema || (platform != "" && meta.Platform != platform) || meta.OriginalOTAName != filename {
 			continue
 		}
 		found, err := readCache(p)

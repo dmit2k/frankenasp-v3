@@ -114,7 +114,10 @@ func firmwareLabel(postBuild, incremental string) string {
 // only in manifest.json and SHA256SUMS.
 func cacheName(meta cacheMetadata) string { return cacheFilename(meta) }
 func cacheMatchesName(folder string, meta cacheMetadata) bool {
-	names := []string{cacheFilename(meta), meta.Platform + "-" + meta.Firmware}
+	names := []string{cacheFilename(meta)}
+	if meta.Platform != "" {
+		names = append(names, meta.Platform+"-"+meta.Firmware)
+	}
 	for _, base := range names {
 		if folder == base {
 			return true
@@ -290,7 +293,7 @@ func readCache(path string) (cacheResult, error) {
 	if e = json.Unmarshal(data, &meta); e != nil {
 		return cacheResult{}, e
 	}
-	if meta.Schema != cacheSchema || (meta.Platform != "athena" && meta.Platform != "rook") || !firmwarePattern.MatchString(meta.Firmware) || (meta.FireOS != "" && !fireOSPattern.MatchString(meta.FireOS)) || !hexDigest.MatchString(meta.SourceSHA256) || (meta.URLSHA256 != "" && !hexDigest.MatchString(meta.URLSHA256)) || (meta.OriginalOTAName != "" && (meta.OriginalOTAName != safeOTAName(meta.OriginalOTAName) || strings.Contains(meta.OriginalOTAName, "/"))) || meta.Files < 1 || meta.Files > cacheFileLimit || meta.Bytes < 1 || meta.Bytes > cacheTotalLimit || meta.DependencyEdges < 0 || meta.DependencyEdges > 16384 {
+	if meta.Schema != cacheSchema || (meta.Platform != "" && normalizedCodename(meta.Platform) != meta.Platform) || !firmwarePattern.MatchString(meta.Firmware) || (meta.FireOS != "" && !fireOSPattern.MatchString(meta.FireOS)) || !hexDigest.MatchString(meta.SourceSHA256) || (meta.URLSHA256 != "" && !hexDigest.MatchString(meta.URLSHA256)) || (meta.OriginalOTAName != "" && (meta.OriginalOTAName != safeOTAName(meta.OriginalOTAName) || strings.Contains(meta.OriginalOTAName, "/"))) || meta.Files < 1 || meta.Files > cacheFileLimit || meta.Bytes < 1 || meta.Bytes > cacheTotalLimit || meta.DependencyEdges < 0 || meta.DependencyEdges > 16384 {
 		return cacheResult{}, errors.New("invalid cache manifest")
 	}
 	if !cacheMatchesName(filepath.Base(path), meta) {
@@ -382,7 +385,7 @@ func findCache(base, platform, sourceHash, urlHash string) (cacheResult, error) 
 	}
 	var candidates []cacheResult
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), platform+"-") {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || entry.Name() == otaImageDir {
 			continue
 		}
 		path := filepath.Join(base, entry.Name())
@@ -394,7 +397,7 @@ func findCache(base, platform, sourceHash, urlHash string) (cacheResult, error) 
 		if json.Unmarshal(raw, &meta) != nil {
 			continue
 		}
-		if meta.Schema != cacheSchema || meta.Platform != platform {
+		if meta.Schema != cacheSchema || platform != "" && meta.Platform != platform {
 			continue
 		}
 		if sourceHash != "" && meta.SourceSHA256 != sourceHash {
@@ -412,7 +415,14 @@ func findCache(base, platform, sourceHash, urlHash string) (cacheResult, error) 
 	if len(candidates) == 0 {
 		return cacheResult{}, os.ErrNotExist
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Metadata.Created > candidates[j].Metadata.Created })
+	if len(candidates) > 1 {
+		names := make([]string, len(candidates))
+		for i, candidate := range candidates {
+			names[i] = filepath.Base(candidate.Path)
+		}
+		sort.Strings(names)
+		return cacheResult{}, fmt.Errorf("ambiguous source cache (%s); select --firmware by exact cache directory", strings.Join(names, ", "))
+	}
 	return candidates[0], nil
 }
 
@@ -427,7 +437,7 @@ func identicalFactoryCache(base string, meta cacheMetadata, wantedLines []string
 		return cacheResult{}, err
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), meta.Platform+"-") {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || entry.Name() == otaImageDir {
 			continue
 		}
 		candidate := filepath.Join(base, entry.Name())

@@ -21,7 +21,7 @@ func selectFirmwareCache(base, platform, requested string) (cacheResult, error) 
 	}
 	candidates := []cacheResult{}
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), platform+"-") {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || entry.Name() == otaImageDir {
 			continue
 		}
 		name := entry.Name()
@@ -34,7 +34,7 @@ func selectFirmwareCache(base, platform, requested string) (cacheResult, error) 
 		if json.Unmarshal(raw, &meta) != nil || meta.Schema != cacheSchema {
 			continue
 		}
-		if meta.Platform != platform {
+		if platform != "" && meta.Platform != platform {
 			continue
 		}
 		if requested != "" && requested != meta.Firmware && requested != fireOSForCache(meta) && requested != name {
@@ -58,7 +58,7 @@ func selectFirmwareCache(base, platform, requested string) (cacheResult, error) 
 			names[i] = filepath.Base(c.Path)
 		}
 		sort.Strings(names)
-		return cacheResult{}, fmt.Errorf("multiple firmware caches available (%s); choose --firmware NAME", strings.Join(names, ", "))
+		return cacheResult{}, fmt.Errorf("ambiguous multiple firmware caches (%s); choose --firmware with exact cache directory name", strings.Join(names, ", "))
 	}
 	return candidates[0], nil
 }

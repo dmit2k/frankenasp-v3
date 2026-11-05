@@ -151,12 +151,32 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		reader.ctx = ctx
 		reader.meter = m
 	}
+	// Cross-check filesystem metadata independently of OTA ZIP metadata.
+	buildProp, err := readSystemBuildProp(src)
+	if err != nil {
+		return cacheResult{}, source, cleanup, err
+	}
+	detected, err := buildPropCodename(buildProp)
+	if err != nil {
+		return cacheResult{}, source, cleanup, err
+	}
+	platform, err = resolveCodename(src.platform, detected)
+	if err != nil {
+		return cacheResult{}, source, cleanup, err
+	}
+	src.platform = platform
+	if src.firmware == "unknown" || src.firmware == "" {
+		src.firmware = firmwareLabel(sourceProperty(buildProp, "ro.build.fingerprint"), sourceProperty(buildProp, "ro.build.version.incremental"))
+	}
+	if src.firmware == "unknown" || src.firmware == "" {
+		src.firmware = "unknown-" + sourceHash[:12]
+	}
 	m.Phase("Extracting factory libraries and dependencies (first use only)")
 	if len(src.selective) > 0 {
 		m.Note("Scans fetch multiple files; cache will skip all scans on later commands")
 	}
 	collected := newCollector(src)
-	if e = collected.closure(platform); e != nil {
+	if e = collected.closure(); e != nil {
 		return cacheResult{}, source, cleanup, fmt.Errorf("factory dependency closure: %w", e)
 	}
 	if e = ctx.Err(); e != nil {
@@ -173,6 +193,9 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	version, versionErr := fireOSFromOTA(source)
 	if versionErr != nil {
 		return cacheResult{}, source, cleanup, fmt.Errorf("read Fire OS version from OTA: %w", versionErr)
+	}
+	if version == "" {
+		version = parseFireOSBuildProp(buildProp)
 	}
 	if version == "" {
 		version = knownFireOS(platform, src.firmware)

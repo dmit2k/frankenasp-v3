@@ -24,8 +24,10 @@ typedef int sig_atomic_t;
 #define UINT64_C(x) x##ULL
 #define EINTR 4
 #define O_RDONLY 0
-#define O_CLOEXEC 524288
-#define O_NOFOLLOW 131072
+#define O_CLOEXEC 02000000
+#define O_NOFOLLOW 0100000
+_Static_assert(O_RDONLY == 0 && O_CLOEXEC == 02000000 &&
+               O_NOFOLLOW == 0100000, "ARM32 open flags");
 extern long read(int,void*,unsigned long);
 extern long write(int,const void*,unsigned long);
 extern int close(int);

@@ -2,7 +2,6 @@ package main
 
 import (
 	"archive/zip"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +31,7 @@ func TestFactoryCacheWithAbsentAndUnlistedPlatform(t *testing.T) {
 	unlisted := unknown
 	unlisted.Platform = "new_echo_model"
 	unlisted.SourceSHA256 = hashString("new-model")
-	novel, err := publishCache(base, unlisted, items, false, nil)
+	novel, err := publishCache(base, unlisted, map[string][]byte{"system/lib/libasp.so": []byte("genuinely different factory bytes")}, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,8 +50,8 @@ func TestFactoryCacheWithAbsentAndUnlistedPlatform(t *testing.T) {
 	if selected, err := findCache(base, "", unknown.SourceSHA256, ""); err != nil || selected.Path != neutral.Path {
 		t.Fatalf("digest selection without platform: %v", err)
 	}
-	if _, err := findCache(base, "other", unknown.SourceSHA256, ""); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("explicit platform filter ignored: %v", err)
+	if got, err := findCache(base, "other", unknown.SourceSHA256, ""); err != nil || got.Path != neutral.Path {
+		t.Fatalf("source hash should override optional platform metadata: %v", err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,94 @@ import (
 	"path"
 	"path/filepath"
 )
+
+// Read the available OTA identity before a hash-based early cache hit.
+// File-tree build properties can be checked without decompressing a block OTA.
+func otaSourceCodename(path string) (string, error) {
+	z, err := zip.OpenReader(path)
+	if err != nil {
+		return "", err
+	}
+	defer z.Close()
+	var otaMeta, buildProp []byte
+	for _, member := range z.File {
+		switch member.Name {
+		case "META-INF/com/android/metadata":
+			otaMeta, err = readZip(member, 65536)
+		case "system/build.prop", "system/system/build.prop":
+			buildProp, err = readZip(member, 128<<10)
+		default:
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	fromOTA, err := sourceCodename(metadataValue(otaMeta, "post-device"), metadataValue(otaMeta, "post-build"))
+	if err != nil {
+		return "", err
+	}
+	fromSystem, err := buildPropCodename(buildProp)
+	if err != nil {
+		return "", err
+	}
+	if fromOTA != "" && fromSystem != "" && fromOTA != fromSystem {
+		return "", fmt.Errorf("OTA source platform %s conflicts with system build platform %s", fromOTA, fromSystem)
+	}
+	if fromSystem != "" {
+		return fromSystem, nil
+	}
+	return fromOTA, nil
+}
+
+// A missing ZIP-level identity is not evidence of a match. Before returning
+// an early cache hit, a caller with an explicit platform must also validate
+// available filesystem build.prop metadata.
+func localOTACacheHitAllowed(path, requested string) (bool, error) {
+	detected, err := otaSourceCodename(path)
+	if errors.Is(err, zip.ErrFormat) {
+		// Historical cache fixtures may be opaque source bytes; attempt the
+		// SHA-256 lookup, and let the normal reader reject an uncached input.
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := resolveCodename(requested, detected); err != nil {
+		return false, err
+	}
+	return requested == "" || detected != "", nil
+}
+
+// Existing URL caches can precede a downloaded ZIP, and earlier versions
+// allowed non-ZIP byte fixtures in the archive index. If a valid ZIP is
+// available, reject explicit platform conflicts with its source metadata.
+func checkAvailableOTAIdentity(path, requested string) error {
+	if requested == "" {
+		return nil
+	}
+	known, err := localOTACacheHitAllowed(path, requested)
+	if err != nil || known {
+		return err
+	}
+	// Block OTAs without standalone identity metadata may still record a
+	// device in the filesystem. Validate that before returning a cache hit.
+	src, handle, err := openOTA(path, requested)
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+	props, err := readSystemBuildProp(src)
+	if err != nil {
+		return err
+	}
+	detected, err := buildPropCodename(props)
+	if err != nil {
+		return err
+	}
+	_, err = resolveCodename(requested, detected)
+	return err
+}
 
 func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceURL, firmware, otaSearchDir, cmd string, noBackup, refresh, deleteOTA bool, m *progressMeter) (cacheResult, string, func(), error) {
 	if sourcePath == "" && sourceURL == "" {
@@ -26,6 +115,14 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	}
 	urlHash := ""
 	sourceHash := ""
+	earlyHitAllowed := true
+	if sourcePath != "" {
+		var err error
+		earlyHitAllowed, err = localOTACacheHitAllowed(sourcePath, platform)
+		if err != nil {
+			return cacheResult{}, "", nil, err
+		}
+	}
 	if sourceURL != "" {
 		urlHash = hashString(sourceURL)
 	} else {
@@ -39,6 +136,18 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	if !refresh {
 		cached, e := findCache(cacheDir, platform, sourceHash, urlHash)
 		if e == nil {
+			if sourcePath != "" && !earlyHitAllowed {
+				if err := checkAvailableOTAIdentity(sourcePath, platform); err != nil {
+					return cacheResult{}, "", nil, err
+				}
+			}
+			if sourceURL != "" {
+				if archive, err := archiveExisting(ctx, cached); err == nil {
+					if err := checkAvailableOTAIdentity(archive, platform); err != nil {
+						return cacheResult{}, "", nil, err
+					}
+				}
+			}
 			m.Note("Verified extracted OTA cache reused; no download or partition scan necessary")
 			describeCache(m, cached)
 			return cached, "", nil, nil
@@ -50,6 +159,9 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	if sourceURL != "" && !refresh {
 		fromArchive, err := cacheForURLFilename(ctx, cacheDir, platform, sourceURL)
 		if err == nil {
+			if err := checkAvailableOTAIdentity(archiveForExtraction(fromArchive), platform); err != nil {
+				return cacheResult{}, "", nil, err
+			}
 			m.Note("Reusing archived OTA with matching source filename and verified SHA-256; no network request")
 			describeCache(m, fromArchive)
 			return fromArchive, "", nil, nil
@@ -117,8 +229,12 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		if e != nil {
 			return cacheResult{}, source, cleanup, e
 		}
-		// A different URL can deliver bytes already present in another verified cache.
-		if !refresh {
+		// A downloaded source must be checked before a hash-only cache hit.
+		allowReuse, identityErr := localOTACacheHitAllowed(source, platform)
+		if identityErr != nil {
+			return cacheResult{}, source, cleanup, identityErr
+		}
+		if !refresh && allowReuse {
 			found, er := findCache(cacheDir, platform, sourceHash, "")
 			if er == nil {
 				m.Note("Downloaded OTA content matches an existing verified cache")

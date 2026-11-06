@@ -378,7 +378,10 @@ func readCache(path string) (cacheResult, error) {
 	}
 	return cacheResult{Items: files, Metadata: meta, Path: path, Hit: true}, nil
 }
-func findCache(base, platform, sourceHash, urlHash string) (cacheResult, error) {
+
+// Source identities are content digests. Platform metadata is intentionally
+// ignored here; explicit platform/firmware filtering uses cache selection functions.
+func findCache(base, _ string, sourceHash, urlHash string) (cacheResult, error) {
 	entries, e := os.ReadDir(base)
 	if e != nil {
 		return cacheResult{}, e
@@ -397,7 +400,7 @@ func findCache(base, platform, sourceHash, urlHash string) (cacheResult, error) 
 		if json.Unmarshal(raw, &meta) != nil {
 			continue
 		}
-		if meta.Schema != cacheSchema || platform != "" && meta.Platform != platform {
+		if meta.Schema != cacheSchema {
 			continue
 		}
 		if sourceHash != "" && meta.SourceSHA256 != sourceHash {
@@ -431,7 +434,7 @@ func findCache(base, platform, sourceHash, urlHash string) (cacheResult, error) 
 // inventories, not source identities, before allocating another directory.
 // The caller owns the cache lock while extracting so two writers cannot publish
 // identical factory content concurrently.
-func identicalFactoryCache(base string, meta cacheMetadata, wantedLines []string) (cacheResult, error) {
+func identicalFactoryCache(base string, wantedLines []string) (cacheResult, error) {
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		return cacheResult{}, err
@@ -450,9 +453,6 @@ func identicalFactoryCache(base string, meta cacheMetadata, wantedLines []string
 			return cacheResult{}, fmt.Errorf("invalid cache metadata %s: %w", entry.Name(), err)
 		}
 		if prior.Schema != cacheSchema {
-			continue
-		}
-		if prior.Platform != meta.Platform || prior.Firmware != meta.Firmware || fireOSForCache(prior) != fireOSForCache(meta) {
 			continue
 		}
 		existing, err := readCache(candidate)
@@ -482,7 +482,7 @@ func publishCache(base string, meta cacheMetadata, items map[string][]byte, refr
 	meta.Bytes = total
 	meta.Schema = cacheSchema
 	meta.Created = time.Now().UTC().Format(time.RFC3339Nano)
-	identical, err := identicalFactoryCache(base, meta, lines)
+	identical, err := identicalFactoryCache(base, lines)
 	if err == nil {
 		if m != nil {
 			m.Note("Extracted factory files are identical to " + filepath.Base(identical.Path) + "; duplicate discarded")

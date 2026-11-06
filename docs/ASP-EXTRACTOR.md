@@ -10,7 +10,7 @@ The desktop and embedded tools reuse the same OTA/ext4 reader, ELF dependency-cl
 
 1. Accepts one **local full OTA ZIP**, an explicitly requested OTA URL, or a directory of supported raw TECHO5 backup images. When present, device identity is read from source metadata; the platform selector is optional, including for URL extraction.
 2. Starts from the discovered factory `libasp.so` and collects its ELF dependencies and available audio configuration files, **not** complete partition images. Factory extraction does not depend on helper support. Validates file hashes and manifest/inventory integrity.
-3. Reuses a verified extraction for the same input when possible. Different OTA/backup sources with **identical factory files** share one cache directory (platform, build and Fire OS version must agree). Genuinely different factory contents receive a numbered `-variant-N` directory.
+3. Reuses a verified extraction for the same input when possible. Different OTA/backup sources with **identical factory files** share one cache directory regardless of optional platform, build or Fire OS labels; the original cache metadata is retained. Genuinely different factory contents receive a numbered `-variant-N` directory.
 4. Optionally lists/verifies the factory cache, creates a **private** combined bundle, or transfers selected factory files and a matching installer release over authenticated SSH.
 5. Leaves `external-asp/`, TECHO5 settings, `echod` and persistent startup untouched. `deploy-all` delivers files **only**. On Echo, the operator must run `asp-installer install` / `update` and explicitly enable External ASP in TECHO5.
 
@@ -132,7 +132,7 @@ $HOME/.cache/frankenasp/asp-extractor/
     └── ota-images/          # only OTA downloads performed by the tool
 ```
 
-With `XDG_CACHE_HOME` set to an absolute directory, the root is instead `$XDG_CACHE_HOME/frankenasp/asp-extractor/asp-installer-cache/`. Use `--cache-dir` to override either default. Each extraction records an internal schema marker in `manifest.json`, **not** in the directory name. File content and checksum inventory, not simply a different full-OTA/backup SHA-256, determine duplicates for the same platform/build/Fire OS. The same source can be reused without another partition scan; requesting a different source may cause a temporary extraction and comparison, but only genuinely different factory content is retained as another set.
+With `XDG_CACHE_HOME` set to an absolute directory, the root is instead `$XDG_CACHE_HOME/frankenasp/asp-extractor/asp-installer-cache/`. Use `--cache-dir` to override either default. Each extraction records an internal schema marker in `manifest.json`, **not** in the directory name. Verified factory file content and the complete SHA-256 inventory determine duplicates independently of descriptive platform, build and Fire OS labels. The same source can be reused without another partition scan; requesting a different source may cause a temporary extraction and comparison, but only genuinely different factory content is retained as another set.
 
 A local OTA stays wherever the user placed it. Backup ext4 images likewise remain untouched and are not copied to cache; the tool no longer writes a source-path index. Completed **tool-downloaded** OTA images are retained in `ota-images/` by default. `list` shows factory sets and available downloads, not a second entry for each earlier input source. The actual installed runtime is **not** stored in the desktop cache.
 

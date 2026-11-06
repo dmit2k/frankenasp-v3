@@ -300,3 +300,11 @@ func TestDesktopFirmwareSelectionByBuildFireOSAndExactDirectory(t *testing.T) {
 		}
 	}
 }
+
+func TestFactoryCacheSelectorNormalizesUnlistedPlatform(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "factory-cache")
+	sampleCache(t, root, "9_new-model", "firmware-test", strings.Repeat("c", 64))
+	if err := runCLI([]string{"verify", "--cache-dir", root, "--platform", "9_New-Model"}); err != nil {
+		t.Fatalf("generic platform selector case normalization: %v", err)
+	}
+}

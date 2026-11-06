@@ -47,8 +47,8 @@ func TestCachePublishAndVerifiedHits(t *testing.T) {
 	if e != nil || !byURL.Hit {
 		t.Fatalf("URL lookup: %v", e)
 	}
-	if _, e = findCache(base, "rook", "", saved.Metadata.URLSHA256); !errors.Is(e, os.ErrNotExist) {
-		t.Fatalf("wrong platform matched: %v", e)
+	if found, err := findCache(base, "rook", "", saved.Metadata.URLSHA256); err != nil || found.Path != saved.Path {
+		t.Fatalf("URL source identity incorrectly filtered by platform: %v", err)
 	}
 }
 func TestCacheDetectsModifiedMissingAndExtraFiles(t *testing.T) {

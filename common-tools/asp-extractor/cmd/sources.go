@@ -30,7 +30,7 @@ func selectDesktopCache(o options) (cacheResult, error) {
 	}
 	var matched []cacheResult
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), o.platform+"-") {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || entry.Name() == otaImageDir {
 			continue
 		}
 		path := filepath.Join(o.cacheDir, entry.Name())
@@ -45,8 +45,8 @@ func selectDesktopCache(o options) (cacheResult, error) {
 		if meta.Schema == "ASP1-EXTRACTED-CACHE-V1" {
 			continue // Never use legacy helper-bound cache for a new bundle.
 		}
-		if meta.Platform != o.platform {
-			return cacheResult{}, fmt.Errorf("manifest platform mismatch: %s", path)
+		if o.platform != "" && meta.Platform != o.platform {
+			continue
 		}
 		if o.firmware != "" && o.firmware != entry.Name() && o.firmware != meta.Firmware && o.firmware != fireOSForCache(meta) {
 			continue
@@ -84,9 +84,7 @@ func listLocal(o options) error {
 		if !entry.IsDir() || entry.Name() == "ota-images" || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		if o.platform != "" && !strings.HasPrefix(entry.Name(), o.platform+"-") {
-			continue
-		}
+
 		path := filepath.Join(o.cacheDir, entry.Name())
 		result, err := readCache(path)
 		if err != nil {
@@ -101,11 +99,18 @@ func listLocal(o options) error {
 			continue
 		}
 		m := result.Metadata
+		if o.platform != "" && o.platform != m.Platform {
+			continue
+		}
 		osLabel := ""
 		if fireos := fireOSForCache(m); fireos != "" {
 			osLabel = " (Fire OS " + fireos + ")"
 		}
-		fmt.Printf("  %s %s%s — %d files", m.Platform, m.Firmware, osLabel, m.Files)
+		label := m.Platform
+		if label == "" {
+			label = "(unknown platform)"
+		}
+		fmt.Printf("  %s %s%s — %d files", label, m.Firmware, osLabel, m.Files)
 		if strings.Contains(entry.Name(), "-variant-") {
 			fmt.Printf(" [--firmware %s]", entry.Name())
 		}
@@ -174,87 +179,169 @@ func printExtractionSummary(result cacheResult) {
 	if result.Hit {
 		status = "reused (no duplicate stored)"
 	}
-	fmt.Printf("Factory ASP %s %s: %d files, %s\n", result.Metadata.Platform, result.Metadata.Firmware, result.Metadata.Files, status)
+	label := result.Metadata.Platform
+	if label == "" {
+		label = "(unidentified)"
+	}
+	fmt.Printf("Factory ASP %s %s: %d files, %s\n", label, result.Metadata.Firmware, result.Metadata.Files, status)
 }
-func openBackupImages(dir, platform string) (*otaSources, []*os.File, error) {
-	names := []string{"system.img"}
-	if platform == "athena" {
-		names = []string{"p21-system.img", "p12-vendor.img"}
+
+// Backup source partitions are selected by ext4 contents, not by Echo codenames
+// or hardcoded partition numbers. The original image files are never changed.
+func closeImages(handles []*os.File) {
+	for _, f := range handles {
+		_ = f.Close()
 	}
-	handles := make([]*os.File, 0, len(names))
-	closeAll := func() {
-		for _, f := range handles {
-			_ = f.Close()
+}
+
+func openBackupImages(dir string) (*otaSources, []*os.File, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	type candidate struct {
+		name   string
+		file   *os.File
+		img    *image
+		score  int
+		prefix string
+	}
+	var candidates []candidate
+	var handles []*os.File
+	fail := func(err error) (*otaSources, []*os.File, error) {
+		closeImages(handles)
+		return nil, nil, err
+	}
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".img") {
+			continue
 		}
-	}
-	imgs := make([]*image, 0, len(names))
-	for i, name := range names {
-		path := filepath.Join(dir, name)
+		path := filepath.Join(dir, entry.Name())
 		info, err := os.Lstat(path)
 		if err != nil {
-			closeAll()
-			return nil, nil, err
+			return fail(err)
 		}
 		if !info.Mode().IsRegular() || info.Size() < 4096 || info.Size() > 4<<30 {
-			closeAll()
-			return nil, nil, fmt.Errorf("invalid raw backup image: %s", path)
+			continue
 		}
 		f, err := os.Open(path)
 		if err != nil {
-			closeAll()
-			return nil, nil, err
+			return fail(err)
+		}
+		img := &image{src: f, size: info.Size()}
+		if err := img.init(); err != nil {
+			_ = f.Close()
+			continue // Non-ext4 image: not a factory filesystem source.
 		}
 		handles = append(handles, f)
-		prefix := ""
-		if platform == "athena" && i == 0 {
-			prefix = "system"
+		c := candidate{name: entry.Name(), file: f, img: img}
+		for _, probe := range []struct {
+			path   string
+			points int
+			prefix string
+		}{
+			{"system/bin/linker", 4, "system"}, {"bin/linker", 4, ""},
+			{"system/build.prop", 1, "system"}, {"build.prop", 1, ""},
+		} {
+			// A nested system root often has /bin as a symlink. Do not
+			// traverse alternate paths once a higher-quality root is known.
+			if c.score >= probe.points {
+				continue
+			}
+			ok, err := img.Exists(probe.path)
+			if err != nil {
+				return fail(err)
+			}
+			if ok {
+				c.score, c.prefix = probe.points, probe.prefix
+			}
 		}
-		imgs = append(imgs, &image{src: f, size: info.Size(), prefix: prefix})
+		candidates = append(candidates, c)
 	}
-	src := &otaSources{platform: platform, kind: "BACKUP_RAW_EXT4", system: imgs[0]}
-	if platform == "athena" {
-		src.vendor = imgs[1]
+	var system *candidate
+	for i := range candidates {
+		c := &candidates[i]
+		if c.score == 0 {
+			continue
+		}
+		if system == nil || c.score > system.score {
+			system = c
+		} else if c.score == system.score {
+			return fail(fmt.Errorf("ambiguous system partitions: %s and %s", system.name, c.name))
+		}
+	}
+	if system == nil {
+		return fail(errors.New("no supported raw ext4 system filesystem found"))
+	}
+	system.img.prefix = system.prefix
+	src := &otaSources{kind: "BACKUP_RAW_EXT4", system: system.img}
+	var vendor *candidate
+	for i := range candidates {
+		c := &candidates[i]
+		if c.name == system.name {
+			continue
+		}
+		for _, probe := range []string{"etc/audio-algorithms/AFE.cfg", "lib/libasp.so", "build.prop"} {
+			ok, err := c.img.Exists(probe)
+			if err != nil {
+				return fail(err)
+			}
+			if ok {
+				if vendor != nil {
+					return fail(fmt.Errorf("ambiguous vendor partitions: %s and %s", vendor.name, c.name))
+				}
+				vendor = c
+				break
+			}
+		}
+	}
+	if vendor != nil {
+		src.vendor = vendor.img
 	} else {
-		src.vendor = prefixed{parent: imgs[0], prefix: "vendor"}
+		src.vendor = prefixed{parent: src.system, prefix: "vendor"}
 	}
-	return src, handles, nil
+	// Order preserves the original Athena (system, vendor) and Rook (system)
+	// backup SHA-256 source identities, irrespective of directory listing order.
+	ordered := []*os.File{system.file}
+	if vendor != nil {
+		ordered = append(ordered, vendor.file)
+	}
+	for _, f := range handles {
+		if f == system.file || vendor != nil && f == vendor.file {
+			continue
+		}
+		_ = f.Close()
+	}
+	return src, ordered, nil
 }
-func backupIdentity(ctx context.Context, dir, platform string) (string, error) {
-	names := []string{"system.img"}
-	if platform == "athena" {
-		names = []string{"p21-system.img", "p12-vendor.img"}
-	}
+
+func backupIdentity(ctx context.Context, files []*os.File) (string, error) {
 	digest := sha256.New()
 	buf := make([]byte, 1<<20)
-	for _, name := range names {
-		_, _ = io.WriteString(digest, name+"\x00")
-		f, err := os.Open(filepath.Join(dir, name))
-		if err != nil {
+	for _, f := range files {
+		_, _ = io.WriteString(digest, filepath.Base(f.Name())+"\x00")
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			return "", err
 		}
 		for {
-			if err = ctx.Err(); err != nil {
-				f.Close()
+			if err := ctx.Err(); err != nil {
 				return "", err
 			}
-			n, e := f.Read(buf)
+			n, err := f.Read(buf)
 			if n > 0 {
 				_, _ = digest.Write(buf[:n])
 			}
-			if e == io.EOF {
+			if err == io.EOF {
 				break
 			}
-			if e != nil {
-				f.Close()
-				return "", e
+			if err != nil {
+				return "", err
 			}
-		}
-		if err = f.Close(); err != nil {
-			return "", err
 		}
 	}
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
+
 func property(buildprop, key string) string {
 	for _, line := range strings.Split(buildprop, "\n") {
 		if strings.HasPrefix(line, key+"=") {
@@ -272,7 +359,7 @@ func extractBackup(ctx context.Context, o options, meter *progressMeter) (cacheR
 		return cacheResult{}, errors.New("--backup-dir must be a directory")
 	}
 	meter.Phase("Opening original ext4 backup images")
-	src, files, err := openBackupImages(o.backup, o.platform)
+	src, files, err := openBackupImages(o.backup)
 	if err != nil {
 		return cacheResult{}, err
 	}
@@ -281,17 +368,18 @@ func extractBackup(ctx context.Context, o options, meter *progressMeter) (cacheR
 			_ = f.Close()
 		}
 	}()
-	bp, err := src.system.Read("build.prop")
+	bp, err := readSystemBuildProp(src)
 	if err != nil {
 		return cacheResult{}, fmt.Errorf("cannot read backup build.prop: %w", err)
 	}
 	text := string(bp)
-	// A familiar partition layout alone must not override contradictory device metadata.
-	identity := property(text, "ro.build.fingerprint")
-	if identity != "" {
-		if strings.Contains(identity, "/athena/") && o.platform != "athena" || strings.Contains(identity, "/rook/") && o.platform != "rook" {
-			return cacheResult{}, fmt.Errorf("backup build fingerprint conflicts with detected %s platform: %s", o.platform, identity)
-		}
+	detected, err := buildPropCodename(bp)
+	if err != nil {
+		return cacheResult{}, err
+	}
+	platform, err := resolveCodename(o.platform, detected)
+	if err != nil {
+		return cacheResult{}, err
 	}
 	firmware := firmwareLabel(property(text, "ro.build.fingerprint"), property(text, "ro.build.version.incremental"))
 	if o.firmware != "" {
@@ -303,7 +391,7 @@ func extractBackup(ctx context.Context, o options, meter *progressMeter) (cacheR
 	// Firmware labels are best-effort provenance metadata, never a prerequisite
 	// for extracting factory files from an owner-provided backup.
 	meter.Phase("Hashing original backup partition pair for cache identity")
-	sourceSHA, err := backupIdentity(ctx, o.backup, o.platform)
+	sourceSHA, err := backupIdentity(ctx, files)
 	if err != nil {
 		return cacheResult{}, err
 	}
@@ -312,7 +400,7 @@ func extractBackup(ctx context.Context, o options, meter *progressMeter) (cacheR
 		meter.Note("Backup firmware version unavailable; using source digest as stable identity")
 	}
 	if !o.refresh {
-		existing, err := findCache(o.cacheDir, o.platform, sourceSHA, "")
+		existing, err := findCache(o.cacheDir, platform, sourceSHA, "")
 		if err == nil {
 			meter.Note("Verified backup cache reused; no ext4 rescan")
 			return existing, nil
@@ -323,14 +411,14 @@ func extractBackup(ctx context.Context, o options, meter *progressMeter) (cacheR
 	}
 	meter.Phase("Collecting factory ELF dependency closure")
 	collected := newCollector(src)
-	if err = collected.closure(o.platform); err != nil {
+	if err = collected.closure(); err != nil {
 		return cacheResult{}, err
 	}
 	if err = ctx.Err(); err != nil {
 		return cacheResult{}, err
 	}
-	fireos := knownFireOS(o.platform, firmware)
-	meta := cacheMetadata{Platform: o.platform, Firmware: firmware, FireOS: fireos, SourceSHA256: sourceSHA, OTAFormat: src.kind, DependencyEdges: collected.edgeCount}
+	fireos := knownFireOS(platform, firmware)
+	meta := cacheMetadata{Platform: platform, Firmware: firmware, FireOS: fireos, SourceSHA256: sourceSHA, OTAFormat: src.kind, DependencyEdges: collected.edgeCount}
 	return publishCache(o.cacheDir, meta, collected.items, o.refresh, meter)
 }
 func cacheFiles(result cacheResult) (map[string][]byte, error) {

@@ -80,7 +80,7 @@ func run() error {
 	}
 	f := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	jsonFlag := f.Bool("json", false, "emit machine-readable JSON instead of human output")
-	platform := f.String("platform", "", "athena|rook; normally detected from release manifest")
+	platform := f.String("platform", "", "optional Echo codename (validated against source when known)")
 	ota := f.String("ota", "", "local OTA ZIP on Echo")
 	otaURL := f.String("ota-url", "", "owner-selected OTA HTTP(S) URL")
 	firmware := f.String("firmware", "", "select already-extracted cached firmware version or variant by name; omit OTA for cached use")
@@ -130,9 +130,11 @@ func run() error {
 	if *restart && !mutating {
 		return errors.New("--restart-techo5 applies only to mutations")
 	}
-	if *platform != "" && *platform != "athena" && *platform != "rook" {
-		return errors.New("unknown --platform")
+	normalizedPlatform, err := resolveCodename(*platform, "")
+	if err != nil {
+		return err
 	}
+	*platform = normalizedPlatform
 	if cmd == "uninstall" || cmd == "rollback" {
 		if *ota != "" || *otaURL != "" {
 			return errors.New("OTA source not required for uninstall/rollback")
@@ -168,25 +170,30 @@ func run() error {
 	if *firmware != "" && (!safePath(*firmware) || strings.Contains(*firmware, "/")) {
 		return errors.New("unsafe --firmware version or cache name")
 	}
-	manifestRaw, e := os.ReadFile(filepath.Join(*assets, "manifest.json"))
-	if e != nil {
-		return fmt.Errorf("release manifest unavailable: %w", e)
-	}
-	var manifest struct {
-		Schema      string `json:"schema"`
-		Platform    string `json:"platform"`
-		CacheSchema string `json:"cache_schema"`
-	}
-	if e = json.Unmarshal(manifestRaw, &manifest); e != nil {
-		return e
-	}
-	if manifest.Schema != "ASP1-ASSETS-V3" || manifest.CacheSchema != cacheSchema || (manifest.Platform != "athena" && manifest.Platform != "rook") {
-		return errors.New("invalid release manifest")
-	}
-	if *platform == "" {
-		*platform = manifest.Platform
-	} else if *platform != manifest.Platform {
-		return errors.New("release platform mismatch")
+	if cmd != "inspect" {
+		// Only helper-bearing operations require a supported release manifest.
+		// Factory inspection must work even when no release exists for a model.
+		manifestRaw, err := os.ReadFile(filepath.Join(*assets, "manifest.json"))
+		if err != nil {
+			return fmt.Errorf("release manifest unavailable: %w", err)
+		}
+		var manifest struct {
+			Schema      string `json:"schema"`
+			Platform    string `json:"platform"`
+			CacheSchema string `json:"cache_schema"`
+		}
+		if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+			return err
+		}
+		if manifest.Schema != "ASP1-ASSETS-V3" || manifest.CacheSchema != cacheSchema ||
+			(manifest.Platform != "athena" && manifest.Platform != "rook") {
+			return errors.New("invalid release manifest")
+		}
+		if *platform == "" {
+			*platform = manifest.Platform
+		} else if *platform != manifest.Platform {
+			return errors.New("release platform mismatch")
+		}
 	}
 	if *vendorMode != "auto" && *vendorMode != "bundled" && *vendorMode != "live" {
 		return errors.New("--vendor-mode must be auto|bundled|live")
@@ -264,7 +271,7 @@ func run() error {
 			return e
 		}
 	}
-	summary := map[string]any{"platform": *platform, "ota_format": extraction.Metadata.OTAFormat, "factory_files": extraction.Metadata.Files, "factory_bytes": extraction.Metadata.Bytes, "dependency_edges": extraction.Metadata.DependencyEdges, "firmware": extraction.Metadata.Firmware, "fire_os_version": fireOSForCache(extraction.Metadata), "platform_label": displayPlatform(*platform), "cache": map[string]any{"hit": extraction.Hit, "path": extraction.Path, "source_sha256": extraction.Metadata.SourceSHA256}}
+	summary := map[string]any{"platform": extraction.Metadata.Platform, "ota_format": extraction.Metadata.OTAFormat, "factory_files": extraction.Metadata.Files, "factory_bytes": extraction.Metadata.Bytes, "dependency_edges": extraction.Metadata.DependencyEdges, "firmware": extraction.Metadata.Firmware, "fire_os_version": fireOSForCache(extraction.Metadata), "platform_label": displayPlatform(extraction.Metadata.Platform), "cache": map[string]any{"hit": extraction.Hit, "path": extraction.Path, "source_sha256": extraction.Metadata.SourceSHA256}}
 	if *otaURL != "" && downloadedOTA != "" {
 		summary["downloaded_ota"] = map[string]any{"path": downloadedOTA, "retained": !*removeOTA}
 	}

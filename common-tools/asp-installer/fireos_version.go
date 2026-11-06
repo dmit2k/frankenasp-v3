@@ -101,15 +101,23 @@ func displayPlatform(platform string) string {
 	case "athena":
 		return "Echo Show 8 (2nd Gen, 2021) [athena]"
 	default:
+		if platform != "" {
+			return platform
+		}
 		return "unidentified"
 	}
 }
 
 func cacheFilename(meta cacheMetadata) string {
-	if osVersion := fireOSForCache(meta); osVersion != "" {
-		return meta.Platform + "-fireos-" + osVersion + "-build-" + meta.Firmware + ""
+	label := meta.Platform
+	if label == "" {
+		// Unknown identity has a deterministic neutral name, never a fake codename.
+		label = "factory-sha256-" + meta.SourceSHA256[:12]
 	}
-	return meta.Platform + "-" + meta.Firmware + ""
+	if osVersion := fireOSForCache(meta); osVersion != "" {
+		return label + "-fireos-" + osVersion + "-build-" + meta.Firmware
+	}
+	return label + "-" + meta.Firmware
 }
 
 // Called with the existing exclusive cache lock. Legacy directories are

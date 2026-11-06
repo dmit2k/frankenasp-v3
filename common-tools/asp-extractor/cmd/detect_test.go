@@ -8,85 +8,85 @@ import (
 	"testing"
 )
 
-func TestBackupPlatformDetectionDoesNotUseSerial(t *testing.T) {
-	for _, tc := range []struct {
-		name, image, want string
-	}{
-		{"G070RQ13843305B5", "system.img", "rook"},
-		{"G091GM10221608N1", "p21-system.img", ""},
-	} {
-		dir := filepath.Join(t.TempDir(), tc.name)
-		if err := os.Mkdir(dir, 0700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, tc.image), []byte("test"), 0600); err != nil {
-			t.Fatal(err)
-		}
-		got, err := detectBackupPlatform(dir)
-		if tc.want == "" && err == nil {
-			t.Fatal("accepted incomplete backup")
-		}
-		if tc.want != "" && (err != nil || got != tc.want) {
-			t.Fatalf("got %s, %v, want %s", got, err, tc.want)
-		}
+func TestBackupDetectionRejectsNonExt4WithoutCodenameGuess(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "unknown-model")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	for _, name := range []string{"p21-system.img", "p12-vendor.img"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("test"), 0600); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(dir, "system.img"), []byte("not ext4"), 0600); err != nil {
+		t.Fatal(err)
 	}
-	got, err := detectBackupPlatform(dir)
-	if err != nil || got != "athena" {
-		t.Fatalf("Athena: %s %v", got, err)
+	if _, err := detectBackupPlatform(dir); err == nil {
+		t.Fatal("accepted unsupported filesystem")
 	}
 }
 
-func TestOTAPlatformDetectionByContents(t *testing.T) {
-	for _, tc := range []struct {
-		name, fingerprint string
-		vendor            bool
-		want              string
-	}{
-		{"athena", "Amazon/athena/athena:9/PS75741.7080N/test", true, "athena"},
-		{"rook", "Amazon/rook/rook:5.1.1/LVY48F/304.6.9.0_user_690918120", false, "rook"},
-		{"contradictory", "Amazon/rook/rook:5.1.1/test", true, ""},
-		{"unknown", "Amazon/unsupported/test:5.1/test", false, ""},
+func TestGenericIdentityAndExplicitMismatch(t *testing.T) {
+	for _, tc := range []struct{ device, fingerprint, want string }{
+		{"", "Amazon/athena/athena:9/PS75741.7080N/test", "athena"},
+		{"", "Amazon/rook/rook:5.1/test", "rook"},
+		{"", "Amazon/test-board/previously_unknown_echo:9/example", "previously_unknown_echo"},
+		{"newboard", "", "newboard"},
+		{"", "", ""},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "full-ota.zip")
-			f, err := os.Create(path)
-			if err != nil {
+		got, err := sourceCodename(tc.device, tc.fingerprint)
+		if err != nil || got != tc.want {
+			t.Fatalf("%q %q: %q, %v", tc.device, tc.fingerprint, got, err)
+		}
+	}
+	if _, err := sourceCodename("device-a", "Amazon/a/device-b:9/x"); err == nil {
+		t.Fatal("conflicting source identity accepted")
+	}
+	if _, err := resolveCodename("another", "previously_unknown_echo"); err == nil {
+		t.Fatal("explicit mismatch accepted")
+	}
+	if got, err := resolveCodename("", "previously_unknown_echo"); err != nil || got != "previously_unknown_echo" {
+		t.Fatalf("automatic codename: %q, %v", got, err)
+	}
+}
+
+func TestOTAPlatformDetectionIndependentOfPartitionLayout(t *testing.T) {
+	for _, tc := range []struct {
+		fingerprint string
+		vendor      bool
+		want        string
+	}{
+		{"Amazon/athena/athena:9/PS75741.7080N/test", true, "athena"},
+		{"Amazon/rook/rook:5.1/test", false, "rook"},
+		{"Amazon/rook/rook:5.1/test", true, "rook"},
+		{"Amazon/new/new_model:9/test", false, "new_model"},
+		{"Amazon/new/9_model:9/test", false, "9_model"},
+		{"", false, ""},
+	} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "ota.zip")
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		zw := zip.NewWriter(f)
+		w, err := zw.Create("META-INF/com/android/metadata")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte("post-build=" + tc.fingerprint + "\n")); err != nil {
+			t.Fatal(err)
+		}
+		if tc.vendor {
+			if _, err := zw.Create("vendor.transfer.list"); err != nil {
 				t.Fatal(err)
 			}
-			zw := zip.NewWriter(f)
-			w, err := zw.Create("META-INF/com/android/metadata")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = w.Write([]byte("post-build=" + tc.fingerprint + "\n")); err != nil {
-				t.Fatal(err)
-			}
-			if tc.vendor {
-				_, err = zw.Create("vendor.transfer.list")
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			if err = zw.Close(); err != nil {
-				t.Fatal(err)
-			}
-			if err = f.Close(); err != nil {
-				t.Fatal(err)
-			}
-			got, err := detectOTAPlatform(path)
-			if tc.want == "" && err == nil {
-				t.Fatalf("accepted invalid OTA %s", got)
-			}
-			if tc.want != "" && (err != nil || got != tc.want) {
-				t.Fatalf("got %s %v, want %s", got, err, tc.want)
-			}
-		})
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		got, err := detectOTAPlatform(path)
+		if err != nil || got != tc.want {
+			t.Fatalf("want %q got %q error %v", tc.want, got, err)
+		}
 	}
 }
 

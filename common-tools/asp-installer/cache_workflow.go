@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,94 @@ import (
 	"path"
 	"path/filepath"
 )
+
+// Read the available OTA identity before a hash-based early cache hit.
+// File-tree build properties can be checked without decompressing a block OTA.
+func otaSourceCodename(path string) (string, error) {
+	z, err := zip.OpenReader(path)
+	if err != nil {
+		return "", err
+	}
+	defer z.Close()
+	var otaMeta, buildProp []byte
+	for _, member := range z.File {
+		switch member.Name {
+		case "META-INF/com/android/metadata":
+			otaMeta, err = readZip(member, 65536)
+		case "system/build.prop", "system/system/build.prop":
+			buildProp, err = readZip(member, 128<<10)
+		default:
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	fromOTA, err := sourceCodename(metadataValue(otaMeta, "post-device"), metadataValue(otaMeta, "post-build"))
+	if err != nil {
+		return "", err
+	}
+	fromSystem, err := buildPropCodename(buildProp)
+	if err != nil {
+		return "", err
+	}
+	if fromOTA != "" && fromSystem != "" && fromOTA != fromSystem {
+		return "", fmt.Errorf("OTA source platform %s conflicts with system build platform %s", fromOTA, fromSystem)
+	}
+	if fromSystem != "" {
+		return fromSystem, nil
+	}
+	return fromOTA, nil
+}
+
+// Check inexpensive ZIP-level identity first. A match here is not proof that
+// the internal filesystem agrees; all early hits use checkAvailableOTAIdentity.
+func checkZIPOTAIdentity(path, requested string) error {
+	detected, err := otaSourceCodename(path)
+	if errors.Is(err, zip.ErrFormat) {
+		// Historical cache fixtures may be opaque source bytes; attempt the
+		// SHA-256 lookup, and let the normal reader reject an uncached input.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = resolveCodename(requested, detected)
+	return err
+}
+
+// Check available ZIP and filesystem identities before reusing a matching
+// extracted cache with an explicit --platform. This reads build.prop through
+// the existing selective block reader without re-extracting factory files.
+// Legacy opaque cached source fixtures have no inspectable OTA identity.
+func checkAvailableOTAIdentity(path, requested string) error {
+	if requested == "" {
+		return nil
+	}
+	src, handle, err := openOTA(path, requested)
+	if errors.Is(err, zip.ErrFormat) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+	// File-tree identities are already directly available from ZIP members.
+	// Use their bounded reader, which also accepts historical empty fixtures.
+	if src.kind == "ZIP_FILE_TREE" {
+		return checkZIPOTAIdentity(path, requested)
+	}
+	props, err := readSystemBuildProp(src)
+	if err != nil {
+		return err
+	}
+	detected, err := buildPropCodename(props)
+	if err != nil {
+		return err
+	}
+	_, err = resolveCodename(requested, detected)
+	return err
+}
 
 func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceURL, firmware, otaSearchDir, cmd string, noBackup, refresh, deleteOTA bool, m *progressMeter) (cacheResult, string, func(), error) {
 	if sourcePath == "" && sourceURL == "" {
@@ -26,6 +115,11 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	}
 	urlHash := ""
 	sourceHash := ""
+	if sourcePath != "" {
+		if err := checkZIPOTAIdentity(sourcePath, platform); err != nil {
+			return cacheResult{}, "", nil, err
+		}
+	}
 	if sourceURL != "" {
 		urlHash = hashString(sourceURL)
 	} else {
@@ -39,6 +133,18 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	if !refresh {
 		cached, e := findCache(cacheDir, platform, sourceHash, urlHash)
 		if e == nil {
+			if sourcePath != "" {
+				if err := checkAvailableOTAIdentity(sourcePath, platform); err != nil {
+					return cacheResult{}, "", nil, err
+				}
+			}
+			if sourceURL != "" {
+				if archive, err := archiveExisting(ctx, cached); err == nil {
+					if err := checkAvailableOTAIdentity(archive, platform); err != nil {
+						return cacheResult{}, "", nil, err
+					}
+				}
+			}
 			m.Note("Verified extracted OTA cache reused; no download or partition scan necessary")
 			describeCache(m, cached)
 			return cached, "", nil, nil
@@ -50,6 +156,9 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	if sourceURL != "" && !refresh {
 		fromArchive, err := cacheForURLFilename(ctx, cacheDir, platform, sourceURL)
 		if err == nil {
+			if err := checkAvailableOTAIdentity(archiveForExtraction(fromArchive), platform); err != nil {
+				return cacheResult{}, "", nil, err
+			}
 			m.Note("Reusing archived OTA with matching source filename and verified SHA-256; no network request")
 			describeCache(m, fromArchive)
 			return fromArchive, "", nil, nil
@@ -117,10 +226,16 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		if e != nil {
 			return cacheResult{}, source, cleanup, e
 		}
-		// A different URL can deliver bytes already present in another verified cache.
+		// A downloaded source must be checked before a hash-only cache hit.
+		if err := checkZIPOTAIdentity(source, platform); err != nil {
+			return cacheResult{}, source, cleanup, err
+		}
 		if !refresh {
 			found, er := findCache(cacheDir, platform, sourceHash, "")
 			if er == nil {
+				if err := checkAvailableOTAIdentity(source, platform); err != nil {
+					return cacheResult{}, source, cleanup, err
+				}
 				m.Note("Downloaded OTA content matches an existing verified cache")
 				describeCache(m, found)
 				if deleteOTA {
@@ -151,12 +266,32 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 		reader.ctx = ctx
 		reader.meter = m
 	}
+	// Cross-check filesystem metadata independently of OTA ZIP metadata.
+	buildProp, err := readSystemBuildProp(src)
+	if err != nil {
+		return cacheResult{}, source, cleanup, err
+	}
+	detected, err := buildPropCodename(buildProp)
+	if err != nil {
+		return cacheResult{}, source, cleanup, err
+	}
+	platform, err = resolveCodename(src.platform, detected)
+	if err != nil {
+		return cacheResult{}, source, cleanup, err
+	}
+	src.platform = platform
+	if src.firmware == "unknown" || src.firmware == "" {
+		src.firmware = firmwareLabel(sourceProperty(buildProp, "ro.build.fingerprint"), sourceProperty(buildProp, "ro.build.version.incremental"))
+	}
+	if src.firmware == "unknown" || src.firmware == "" {
+		src.firmware = "unknown-" + sourceHash[:12]
+	}
 	m.Phase("Extracting factory libraries and dependencies (first use only)")
 	if len(src.selective) > 0 {
 		m.Note("Scans fetch multiple files; cache will skip all scans on later commands")
 	}
 	collected := newCollector(src)
-	if e = collected.closure(platform); e != nil {
+	if e = collected.closure(); e != nil {
 		return cacheResult{}, source, cleanup, fmt.Errorf("factory dependency closure: %w", e)
 	}
 	if e = ctx.Err(); e != nil {
@@ -173,6 +308,9 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	version, versionErr := fireOSFromOTA(source)
 	if versionErr != nil {
 		return cacheResult{}, source, cleanup, fmt.Errorf("read Fire OS version from OTA: %w", versionErr)
+	}
+	if version == "" {
+		version = parseFireOSBuildProp(buildProp)
 	}
 	if version == "" {
 		version = knownFireOS(platform, src.firmware)

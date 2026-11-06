@@ -122,6 +122,9 @@ func cachedLocalOTAForURL(ctx context.Context, cacheDir, otaSearchDir, platform,
 		}
 		result, err := findCache(cacheDir, platform, hash, "")
 		if err == nil {
+			if err := checkAvailableOTAIdentity(filename, platform); err != nil {
+				return cacheResult{}, "", err
+			}
 			m.Note("Reusing saved local OTA and its verified extracted cache; skipping network download")
 			m.Note("Local OTA: " + filename)
 			describeCache(m, result)

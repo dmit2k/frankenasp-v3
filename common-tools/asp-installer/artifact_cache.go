@@ -114,7 +114,10 @@ func firmwareLabel(postBuild, incremental string) string {
 // only in manifest.json and SHA256SUMS.
 func cacheName(meta cacheMetadata) string { return cacheFilename(meta) }
 func cacheMatchesName(folder string, meta cacheMetadata) bool {
-	names := []string{cacheFilename(meta), meta.Platform + "-" + meta.Firmware}
+	names := []string{cacheFilename(meta)}
+	if meta.Platform != "" {
+		names = append(names, meta.Platform+"-"+meta.Firmware)
+	}
 	for _, base := range names {
 		if folder == base {
 			return true
@@ -290,7 +293,7 @@ func readCache(path string) (cacheResult, error) {
 	if e = json.Unmarshal(data, &meta); e != nil {
 		return cacheResult{}, e
 	}
-	if meta.Schema != cacheSchema || (meta.Platform != "athena" && meta.Platform != "rook") || !firmwarePattern.MatchString(meta.Firmware) || (meta.FireOS != "" && !fireOSPattern.MatchString(meta.FireOS)) || !hexDigest.MatchString(meta.SourceSHA256) || (meta.URLSHA256 != "" && !hexDigest.MatchString(meta.URLSHA256)) || (meta.OriginalOTAName != "" && (meta.OriginalOTAName != safeOTAName(meta.OriginalOTAName) || strings.Contains(meta.OriginalOTAName, "/"))) || meta.Files < 1 || meta.Files > cacheFileLimit || meta.Bytes < 1 || meta.Bytes > cacheTotalLimit || meta.DependencyEdges < 0 || meta.DependencyEdges > 16384 {
+	if meta.Schema != cacheSchema || (meta.Platform != "" && normalizedCodename(meta.Platform) != meta.Platform) || !firmwarePattern.MatchString(meta.Firmware) || (meta.FireOS != "" && !fireOSPattern.MatchString(meta.FireOS)) || !hexDigest.MatchString(meta.SourceSHA256) || (meta.URLSHA256 != "" && !hexDigest.MatchString(meta.URLSHA256)) || (meta.OriginalOTAName != "" && (meta.OriginalOTAName != safeOTAName(meta.OriginalOTAName) || strings.Contains(meta.OriginalOTAName, "/"))) || meta.Files < 1 || meta.Files > cacheFileLimit || meta.Bytes < 1 || meta.Bytes > cacheTotalLimit || meta.DependencyEdges < 0 || meta.DependencyEdges > 16384 {
 		return cacheResult{}, errors.New("invalid cache manifest")
 	}
 	if !cacheMatchesName(filepath.Base(path), meta) {
@@ -375,14 +378,17 @@ func readCache(path string) (cacheResult, error) {
 	}
 	return cacheResult{Items: files, Metadata: meta, Path: path, Hit: true}, nil
 }
-func findCache(base, platform, sourceHash, urlHash string) (cacheResult, error) {
+
+// Source identities are content digests. Platform metadata is intentionally
+// ignored here; explicit platform/firmware filtering uses cache selection functions.
+func findCache(base, _ string, sourceHash, urlHash string) (cacheResult, error) {
 	entries, e := os.ReadDir(base)
 	if e != nil {
 		return cacheResult{}, e
 	}
 	var candidates []cacheResult
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), platform+"-") {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || entry.Name() == otaImageDir {
 			continue
 		}
 		path := filepath.Join(base, entry.Name())
@@ -394,7 +400,7 @@ func findCache(base, platform, sourceHash, urlHash string) (cacheResult, error) 
 		if json.Unmarshal(raw, &meta) != nil {
 			continue
 		}
-		if meta.Schema != cacheSchema || meta.Platform != platform {
+		if meta.Schema != cacheSchema {
 			continue
 		}
 		if sourceHash != "" && meta.SourceSHA256 != sourceHash {
@@ -412,7 +418,14 @@ func findCache(base, platform, sourceHash, urlHash string) (cacheResult, error) 
 	if len(candidates) == 0 {
 		return cacheResult{}, os.ErrNotExist
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Metadata.Created > candidates[j].Metadata.Created })
+	if len(candidates) > 1 {
+		names := make([]string, len(candidates))
+		for i, candidate := range candidates {
+			names[i] = filepath.Base(candidate.Path)
+		}
+		sort.Strings(names)
+		return cacheResult{}, fmt.Errorf("ambiguous source cache (%s); select --firmware by exact cache directory", strings.Join(names, ", "))
+	}
 	return candidates[0], nil
 }
 
@@ -421,13 +434,13 @@ func findCache(base, platform, sourceHash, urlHash string) (cacheResult, error) 
 // inventories, not source identities, before allocating another directory.
 // The caller owns the cache lock while extracting so two writers cannot publish
 // identical factory content concurrently.
-func identicalFactoryCache(base string, meta cacheMetadata, wantedLines []string) (cacheResult, error) {
+func identicalFactoryCache(base string, wantedLines []string) (cacheResult, error) {
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		return cacheResult{}, err
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), meta.Platform+"-") {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || entry.Name() == otaImageDir {
 			continue
 		}
 		candidate := filepath.Join(base, entry.Name())
@@ -440,9 +453,6 @@ func identicalFactoryCache(base string, meta cacheMetadata, wantedLines []string
 			return cacheResult{}, fmt.Errorf("invalid cache metadata %s: %w", entry.Name(), err)
 		}
 		if prior.Schema != cacheSchema {
-			continue
-		}
-		if prior.Platform != meta.Platform || prior.Firmware != meta.Firmware || fireOSForCache(prior) != fireOSForCache(meta) {
 			continue
 		}
 		existing, err := readCache(candidate)
@@ -472,7 +482,7 @@ func publishCache(base string, meta cacheMetadata, items map[string][]byte, refr
 	meta.Bytes = total
 	meta.Schema = cacheSchema
 	meta.Created = time.Now().UTC().Format(time.RFC3339Nano)
-	identical, err := identicalFactoryCache(base, meta, lines)
+	identical, err := identicalFactoryCache(base, lines)
 	if err == nil {
 		if m != nil {
 			m.Note("Extracted factory files are identical to " + filepath.Base(identical.Path) + "; duplicate discarded")

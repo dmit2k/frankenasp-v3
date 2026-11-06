@@ -1,6 +1,6 @@
 # asp-extractor — Linux x86_64
 
-Desktop utility for preparing and delivering owner-provided factory ASP dependencies to supported FrankenASP V3 devices (`athena` and `rook`). It does **not** install or activate the runtime on the Echo.
+Desktop utility for extracting owner-provided factory ASP dependencies independently of Echo platform codenames. Runtime packaging and deployment remain limited to compatible FrankenASP releases (currently Athena and Rook). It does **not** install or activate the runtime on the Echo.
 
 **Full documentation:** [ASP-EXTRACTOR.md](../../docs/ASP-EXTRACTOR.md) in the source repository (or `ASP-EXTRACTOR.md` beside this README in the packaged archive), including all commands, option defaults, storage, OTA/backup handling, bundles, SSH delivery and device follow-up. For the embedded tool, see [ASP-INSTALL.md](../../docs/ASP-INSTALL.md).
 

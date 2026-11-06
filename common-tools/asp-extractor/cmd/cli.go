@@ -52,7 +52,7 @@ func runCLI(args []string) error {
 	}
 	o := options{command: cmd, cacheDir: filepath.Join(root, "asp-installer-cache"), port: 22}
 	f := flag.NewFlagSet("asp-extractor "+cmd, flag.ContinueOnError)
-	f.StringVar(&o.platform, "platform", "", "target Echo codename (athena|rook)")
+	f.StringVar(&o.platform, "platform", "", "optional Echo codename; checked against source metadata if known")
 	f.StringVar(&o.firmware, "firmware", "", "firmware build/Fire OS version or exact cache directory name")
 	f.StringVar(&o.cacheDir, "cache-dir", o.cacheDir, "absolute PC asp-installer-cache root")
 	f.StringVar(&o.ota, "ota", "", "local full OTA ZIP")
@@ -72,9 +72,6 @@ func runCLI(args []string) error {
 	if len(f.Args()) != 0 {
 		return fmt.Errorf("unexpected arguments: %v", f.Args())
 	}
-	if (cmd == "verify" || cmd == "deploy-cache") && o.platform == "" {
-		return errors.New("--platform is required for cache selection")
-	}
 	if cmd == "extract" {
 		if o.release != "" {
 			return errors.New("extract reads factory data only; omit --asp-release")
@@ -84,26 +81,26 @@ func runCLI(args []string) error {
 			if err != nil {
 				return err
 			}
-			if o.platform != "" && o.platform != detected {
-				return fmt.Errorf("--platform %s conflicts with backup platform %s", o.platform, detected)
+			o.platform, err = resolveCodename(o.platform, detected)
+			if err != nil {
+				return err
 			}
-			o.platform = detected
 		} else if o.ota != "" {
 			detected, err := detectOTAPlatform(o.ota)
 			if err != nil {
 				return err
 			}
-			if o.platform != "" && o.platform != detected {
-				return fmt.Errorf("--platform %s conflicts with OTA platform %s", o.platform, detected)
+			o.platform, err = resolveCodename(o.platform, detected)
+			if err != nil {
+				return err
 			}
-			o.platform = detected
-		} else if o.platform == "" && o.otaURL != "" {
-			return errors.New("--platform is required for --ota-url (the remote archive cannot be inspected before download)")
 		}
 	}
-	if o.platform != "" && o.platform != "athena" && o.platform != "rook" {
-		return errors.New("--platform must be athena or rook")
+	normalizedPlatform, err := resolveCodename(o.platform, "")
+	if err != nil {
+		return err
 	}
+	o.platform = normalizedPlatform
 	if !filepath.IsAbs(o.cacheDir) || filepath.Clean(o.cacheDir) == "/" {
 		return errors.New("--cache-dir must be an absolute non-root directory")
 	}
@@ -234,8 +231,8 @@ Common: --platform, --firmware, --cache-dir, --asp-release,
         --host, --port, --identity, --known-hosts, --output,
         --ota, --ota-url, --backup-dir, --refresh-cache
 
-For local OTA and backup extraction, platform is detected automatically.
-For --ota-url, specify --platform.
+Platform is optional for factory extraction and cache selection.
+When available, device identity is detected from source metadata.
 --asp-release FILE is a local .tar.gz archive path, NOT a version number.
 --firmware normally takes Amazon's firmware build (e.g. 690918120), not a
 cache directory; use the exact directory name only to distinguish variants.

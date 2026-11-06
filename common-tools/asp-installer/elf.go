@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -249,59 +250,125 @@ func (c *collector) existMany(paths []string) (map[string]bool, error) {
 	})
 	return result, err
 }
-func (c *collector) closure(platform string) error {
-	configFiles, e := c.fileList("vendor/etc/audio-algorithms")
-	if e != nil {
-		return e
+
+// Factory extraction follows the discovered libasp.so and its DT_NEEDED
+// edges. No helper or Echo codename participates in this process.
+func (c *collector) closure() error {
+	probes := []string{
+		"vendor/lib/libasp.so", "system/lib/libasp.so",
+		"system/bin/linker", "system/lib/ld-android.so",
+		"system/build.prop", "vendor/build.prop",
+		"system/etc/public.libraries.txt", "system/etc/public.libraries-AMAZON.txt",
+		"vendor/etc/audio-algorithms", "system/etc/audio-algorithms",
 	}
-	required := []string{"system/bin/linker"}
-	if platform == "athena" {
-		required = append(required, "vendor/lib/libasp.so", "vendor/build.prop", "system/lib/ld-android.so", "system/build.prop", "system/etc/ld.config.28.txt", "system/etc/public.libraries.txt", "system/etc/public.libraries-AMAZON.txt")
-	} else {
-		required = append(required, "system/lib/libasp.so")
+	existing, err := c.existMany(probes)
+	if err != nil {
+		return err
 	}
-	required = append(required, configFiles...)
+	asp := ""
+	if existing["vendor/lib/libasp.so"] {
+		asp = "vendor/lib/libasp.so"
+	}
+	if asp == "" && existing["system/lib/libasp.so"] {
+		asp = "system/lib/libasp.so"
+	}
+	if asp == "" {
+		return errors.New("factory libasp.so not found in source library roots")
+	}
+	required := []string{asp}
+	// The standalone system-lib layout needs only its loader and libasp
+	// dependencies. Separate vendor-lib layouts additionally need linker
+	// namespace metadata; this retains the existing V2 inventories.
+	if existing["system/bin/linker"] {
+		required = append(required, "system/bin/linker")
+	}
+	if strings.HasPrefix(asp, "vendor/") {
+		for _, path := range probes[3:8] {
+			if existing[path] {
+				required = append(required, path)
+			}
+		}
+	}
+	// Collect the source's actual audio configuration files, without requiring
+	// an arbitrary device-specific filename.
+	for _, dir := range []string{"vendor/etc/audio-algorithms", "system/etc/audio-algorithms"} {
+		if !existing[dir] {
+			continue
+		}
+		paths, e := c.fileList(dir)
+		if e != nil {
+			return e
+		}
+		required = append(required, paths...)
+	}
 	if err := c.readMany(required); err != nil {
 		return err
 	}
-	for _, name := range []string{"AFE.cfg"} {
-		if len(c.items["vendor/etc/audio-algorithms/"+name]) == 0 {
-			return errors.New("required AFE.cfg missing")
+
+	vndk := ""
+	for _, prop := range []string{"vendor/build.prop", "system/build.prop"} {
+		if version := sourceProperty(c.items[prop], "ro.vndk.version"); version != "" {
+			vndk = version
+			break
 		}
 	}
-	if platform == "athena" && len(c.items["vendor/etc/audio-algorithms/asp.cfg"]) == 0 {
-		return errors.New("required asp.cfg missing")
+	// Linker namespace configuration matters for vendor-rooted libasp.
+	// Standalone system-rooted libasp keeps its historical cache closure.
+	if strings.HasPrefix(asp, "vendor/") {
+		names := []string{"system/etc/ld.config.txt", "system/etc/ld.config.28.txt"}
+		if vndk != "" && normalizedVersion(vndk) {
+			names = append([]string{"system/etc/ld.config." + vndk + ".txt"}, names...)
+		}
+		present, err := c.existMany(names)
+		if err != nil {
+			return err
+		}
+		var configs []string
+		for _, name := range names {
+			if present[name] {
+				configs = append(configs, name)
+			}
+		}
+		if err := c.readMany(configs); err != nil {
+			return err
+		}
+		for _, filename := range configs {
+			if vndk == "" {
+				if m := vndkDirectoryPattern.FindSubmatch(c.items[filename]); len(m) > 1 {
+					vndk = string(m[1])
+				}
+			}
+		}
 	}
-	if platform == "rook" && len(c.items["vendor/etc/audio-algorithms/coefs_FBF.cfg"]) == 0 {
-		return errors.New("required coefs_FBF.cfg missing")
+	if existing["system/bin/linker"] {
+		if _, err := elfNeeded(c.items["system/bin/linker"], true, ""); err != nil {
+			return fmt.Errorf("linker: %w", err)
+		}
 	}
-	if _, e = elfNeeded(c.items["system/bin/linker"], true, ""); e != nil {
-		return fmt.Errorf("linker: %w", e)
-	}
-	aspirant := "system/lib/libasp.so"
 	priorities := []string{"system/lib", "vendor/lib"}
-	if platform == "athena" {
-		aspirant = "vendor/lib/libasp.so"
-		priorities = []string{"vendor/lib", "system/lib/vndk-28", "system/lib/vndk-sp-28", "system/lib"}
+	if strings.HasPrefix(asp, "vendor/") {
+		priorities = []string{"vendor/lib"}
+		if vndk != "" && normalizedVersion(vndk) {
+			priorities = append(priorities, "system/lib/vndk-"+vndk, "system/lib/vndk-sp-"+vndk)
+		}
+		priorities = append(priorities, "system/lib")
 	}
-	queue := []runtimeFile{{aspirant, c.items[aspirant]}}
+	queue := []runtimeFile{{asp, c.items[asp]}}
 	visited := map[string]bool{}
 	var bytesTotal uint64
 	for len(queue) > 0 {
-		missingNames := []string{}
+		var missingNames []string
 		for _, node := range queue {
 			if visited[node.path] {
 				continue
 			}
 			visited[node.path] = true
 			bytesTotal += uint64(len(node.data))
-			libs, e := elfNeeded(node.data, true, "")
-			if e != nil {
-				return fmt.Errorf("%s: %w", node.path, e)
+			libs, err := elfNeeded(node.data, true, "")
+			if err != nil {
+				return fmt.Errorf("%s: %w", node.path, err)
 			}
-			for _, name := range libs {
-				missingNames = append(missingNames, name)
-			}
+			missingNames = append(missingNames, libs...)
 		}
 		queue = nil
 		if len(visited) > 256 || bytesTotal > 128<<20 {
@@ -310,25 +377,25 @@ func (c *collector) closure(platform string) error {
 		if len(missingNames) == 0 {
 			break
 		}
-		candidates := []string{}
+		var candidates []string
 		for _, name := range missingNames {
 			for _, dir := range priorities {
 				candidates = append(candidates, dir+"/"+name)
 			}
 		}
-		exists, e := c.existMany(candidates)
-		if e != nil {
-			return e
+		exists, err := c.existMany(candidates)
+		if err != nil {
+			return err
 		}
 		selected := map[string]string{}
 		for _, name := range missingNames {
-			if _, ok := selected[name]; ok {
+			if selected[name] != "" {
 				continue
 			}
 			for _, dir := range priorities {
-				p := dir + "/" + name
-				if exists[p] {
-					selected[name] = p
+				path := dir + "/" + name
+				if exists[path] {
+					selected[name] = path
 					break
 				}
 			}
@@ -336,20 +403,34 @@ func (c *collector) closure(platform string) error {
 				return fmt.Errorf("missing Bionic dependency %q", name)
 			}
 		}
-		all := []string{}
-		for _, p := range selected {
-			all = append(all, p)
+		var paths []string
+		for _, path := range selected {
+			paths = append(paths, path)
 		}
-		if e := c.readMany(all); e != nil {
-			return e
+		if err := c.readMany(paths); err != nil {
+			return err
 		}
 		for _, name := range missingNames {
-			p := selected[name]
-			queue = append(queue, runtimeFile{p, c.items[p]})
+			path := selected[name]
+			queue = append(queue, runtimeFile{path, c.items[path]})
 			c.edgeCount++
 		}
 	}
 	return nil
+}
+
+var vndkDirectoryPattern = regexp.MustCompile(`vndk-([0-9]+)`)
+
+func normalizedVersion(value string) bool {
+	if value == "" || len(value) > 5 {
+		return false
+	}
+	for _, c := range value {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // validateHelperRuntime checks the selected helper against an already extracted

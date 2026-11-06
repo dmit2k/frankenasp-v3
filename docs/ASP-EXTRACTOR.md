@@ -2,19 +2,19 @@
 
 `asp-extractor` prepares the original Amazon factory ASP dependencies **on a desktop** from an owner-provided full OTA or supported TECHO5 backup. It builds a verified local factory-file cache, then can transfer the selected cache and a FrankenASP installer release to an Echo. It does **not** install or activate the runtime on the Echo: that is the separate, manual `asp-installer` step.
 
-**Supported host:** Linux x86_64 only. **Factory extraction** is independent of Echo codenames for supported source formats and ELF layouts. **FrankenASP runtime packages and hardware validation** currently cover Echo Show 8 (2nd generation, `athena`) and Echo Spot (1st generation, `rook`). Other runtime targets are not supported. The tool includes no Amazon firmware or proprietary factory files; private extracted caches and bundles must **not** be published to GitHub Releases.
+**Supported host:** Linux x86_64 only. **Factory extraction** is independent of Echo codenames for supported source formats. **FrankenASP runtime packages and hardware validation** currently cover Echo Show 8 (2nd generation, `athena`) and Echo Spot (1st generation, `rook`). Other runtime targets are not supported. The tool includes no Amazon firmware or proprietary factory files; private extracted caches and bundles must **not** be published to GitHub Releases.
 
-The desktop and embedded tools reuse the same OTA/ext4 reader, ELF dependency-closure extractor and SHA-256 cache code. For on-device installation, maintenance and activation boundaries, see [ASP-INSTALL.md](ASP-INSTALL.md).
+The desktop and embedded tools use compatible factory extraction and verified-cache formats. For on-device installation, maintenance and activation boundaries, see [ASP-INSTALL.md](ASP-INSTALL.md).
 
 ## How it works
 
 1. Accepts one **local full OTA ZIP**, an explicitly requested OTA URL, or a directory of supported raw TECHO5 backup images. When present, device identity is read from source metadata; the platform selector is optional, including for URL extraction.
-2. Starts from the discovered factory `libasp.so` and collects its ELF dependencies and available audio configuration files, **not** complete partition images. Factory extraction does not depend on helper support. Validates file hashes and manifest/inventory integrity.
+2. Extracts the factory audio files required for processing, **not** complete partition images. Factory extraction does not require a matching FrankenASP runtime release. File hashes and cache integrity are verified.
 3. Reuses a verified extraction for the same input when possible. Different OTA/backup sources with **identical factory files** share one cache directory regardless of optional platform, build or Fire OS labels; the original cache metadata is retained. Genuinely different factory contents receive a numbered `-variant-N` directory.
 4. Optionally lists/verifies the factory cache, creates a **private** combined bundle, or transfers selected factory files and a matching installer release over authenticated SSH.
 5. Leaves `external-asp/`, TECHO5 settings, `echod` and persistent startup untouched. `deploy-all` delivers files **only**. On Echo, the operator must run `asp-installer install` / `update` and explicitly enable External ASP in TECHO5.
 
-A local OTA is **never copied or deleted** by `asp-extractor`; a local backup is also read in place and forgotten. There is no backup source-path index: old `asp-extractor-backups.json` files from earlier experimental builds are ignored. Only OTA files actually **downloaded by the tool** are stored under `ota-images/` by default.
+A local OTA is **never copied or deleted** by `asp-extractor`; local backups are also read in place. Source paths are not retained in the cache. Only OTA files actually **downloaded by the tool** are stored under `ota-images/` by default.
 
 ## Minimal workflow: prepare and deliver a local OTA
 
@@ -51,23 +51,14 @@ If `external-asp/` already exists, use `update --firmware YOUR_AMAZON_BUILD --ye
 
 ### Instead of an OTA: read a TECHO5 backup
 
-`--backup-dir` takes a directory containing **raw ext4 partition images** (not a tarball). Partitions are identified by filesystem contents rather than an Echo codename or a fixed image filename. Examples of accepted input directory layouts:
-
-```text
-# Athena (both in the selected directory):
-BACKUP_DIR/p21-system.img
-BACKUP_DIR/p12-vendor.img
-
-# Rook:
-BACKUP_DIR/system.img
-```
+`--backup-dir` takes a directory containing **raw ext4 partition images** (not a tarball). Place the system image and, if available, the separate vendor image in the same directory. Files must have the `.img` extension; the tool identifies their roles from filesystem contents rather than device codenames or fixed filenames.
 
 ```sh
 "$EX" extract --backup-dir /path/to/BACKUP_DIR
 "$EX" list
 ```
 
-The utility discovers the system and optional separate vendor filesystem from ext4 contents. Model identity, when present in build properties, is recorded as metadata; an explicit `--platform` must agree. It reads ext4 directly in Go, without mounting the images. It saves **only extracted factory files**, not the backup images or their paths. Whole-device eMMC dumps and arbitrary image tarballs are not accepted by this interface.
+The utility identifies the available supported filesystems. When source metadata identifies the device, an explicit `--platform` must agree. Images are read without mounting. Only extracted factory files are cached; original images and their paths are not stored. Whole-device dumps and image tarballs are not accepted.
 
 ### Instead of a local file: explicitly download a full OTA
 
@@ -76,7 +67,7 @@ The utility discovers the system and optional separate vendor filesystem from ex
 "$EX" extract --platform rook --ota-url "$OTA_URL"
 ```
 
-For `--ota-url`, `--platform` is optional; source identity is validated after the OTA is available. A successfully downloaded OTA is normally retained in `<cache-dir>/ota-images/`; for `--ota FILE`, the original local OTA is **never copied there**. The inherited downloader does not perform normal HTTPS certificate/hostname verification. Independently authenticate the firmware's provenance; SHA-256 protects cache integrity, **not Amazon authenticity**.
+For `--ota-url`, `--platform` is optional. When supplied, it is checked against available OTA device identity, including on cache reuse. A successfully downloaded OTA is normally retained in `<cache-dir>/ota-images/`; for `--ota FILE`, the local OTA is **never copied there**. HTTPS certificate and hostname validation are **not** provided by the OTA downloader. Independently verify the firmware source; SHA-256 protects cache integrity, **not Amazon authenticity**.
 
 ## Command reference
 
@@ -105,7 +96,7 @@ For `--ota-url`, `--platform` is optional; source identity is validated after th
 | `--ota-url URL` | **Unset** | Owner-specified full OTA HTTP(S) URL for `extract`; `--platform` optional. Download is retained by default. Exclusive with other sources. |
 | `--backup-dir DIR` | **Unset** | Directory holding supported raw TECHO5 backup images for `extract`; original images and source path are not stored. Exclusive with OTA sources. |
 | `--refresh-cache` | `false` | Reprocess explicit source on `extract` rather than using early source-identity reuse. If extracted file contents already match, they are still deduplicated; different contents can receive another variant. |
-| `--asp-release FILE` | **Unset** | Required by `create-bundle`, `deploy-asp`, `deploy-all`. Must point to a local matching `frankenasp-vVERSION-PLATFORM-arm32.tar.gz`; validates platform, required assets and internal cache schema. Not used by `extract`, `verify`, `list` or `deploy-cache`. |
+| `--asp-release FILE` | **Unset** | Required by `create-bundle`, `deploy-asp`, `deploy-all`. Must point to a local matching `frankenasp-vVERSION-PLATFORM-arm32.tar.gz`; validates release platform, assets and cache compatibility. Not used by `extract`, `verify`, `list` or `deploy-cache`. |
 | `--output FILE` | **Unset** | Required by `create-bundle`. Must end in `.tar.gz`; output **cannot overwrite** an existing file. |
 | `--host root@HOST` | **Unset** | Required by `deploy-cache`, `deploy-asp` and `deploy-all`. Only `root` is accepted as SSH username. |
 | `--port NUMBER` | `22` | SSH port (1–65535). |
@@ -124,17 +115,17 @@ $HOME/.cache/frankenasp/asp-extractor/
     ├── PLATFORM-fireos-FIRE_OS_VERSION-build-AMAZON_BUILD/
     │   ├── manifest.json     # firmware/build/source details and internal schema
     │   ├── SHA256SUMS        # cryptographic inventory of factory files
-    │   └── files/           # required system/ and vendor/ dependency closure
+    │   └── files/           # verified extracted factory files
     ├── PLATFORM-AMAZON_BUILD/  # possible if Fire OS version is unavailable
-    ├── factory-sha256-SOURCE_HASH_PREFIX-.../ # unknown source codename
+    ├── factory-sha256-SOURCE_HASH_PREFIX-.../ # codename unavailable
     ├── ...-variant-N/        # same build, different factory file contents
     ├── .cache.lock          # private concurrent extraction lock
     └── ota-images/          # only OTA downloads performed by the tool
 ```
 
-With `XDG_CACHE_HOME` set to an absolute directory, the root is instead `$XDG_CACHE_HOME/frankenasp/asp-extractor/asp-installer-cache/`. Use `--cache-dir` to override either default. Each extraction records an internal schema marker in `manifest.json`, **not** in the directory name. Verified factory file content and the complete SHA-256 inventory determine duplicates independently of descriptive platform, build and Fire OS labels. The same source can be reused without another partition scan; requesting a different source may cause a temporary extraction and comparison, but only genuinely different factory content is retained as another set.
+With `XDG_CACHE_HOME` set to an absolute directory, the root is instead `$XDG_CACHE_HOME/frankenasp/asp-extractor/asp-installer-cache/`. Use `--cache-dir` to override either default. Each extraction records its cache format and source metadata in `manifest.json`. Verified factory file content and the complete SHA-256 inventory determine duplicates independently of descriptive platform, build and Fire OS labels. The same source can be reused without another partition scan; requesting a different source may cause a temporary extraction and comparison, but only genuinely different factory content is retained as another set.
 
-A local OTA stays wherever the user placed it. Backup ext4 images likewise remain untouched and are not copied to cache; the tool no longer writes a source-path index. Completed **tool-downloaded** OTA images are retained in `ota-images/` by default. `list` shows factory sets and available downloads, not a second entry for each earlier input source. The actual installed runtime is **not** stored in the desktop cache.
+A local OTA stays wherever the user placed it. Backup ext4 images likewise remain untouched and are not copied to cache. Completed **tool-downloaded** OTA images are retained in `ota-images/` by default. `list` shows factory sets and available downloads without duplicating entries for their input sources. The actual installed runtime is **not** stored in the desktop cache.
 
 **Remote destination** (fixed irrespective of local `--cache-dir`):
 
@@ -178,27 +169,27 @@ The bundle contains one verified factory cache, the original release archive and
 
 ## Build, package and tests
 
-Go **1.26.9** is required for the project build. From the repository root:
+Use Go **1.26.9** or a compatible newer version (validated with **1.27.3**). From the repository root:
 
 ```sh
 cd common-tools/asp-extractor
-GO=/path/to/go1.26.9/bin/go ./build.sh
-GO=/path/to/go1.26.9/bin/go ./test.sh
+GO=/path/to/go/bin/go ./build.sh
+GO=/path/to/go/bin/go ./test.sh
 
 # Substitute the actual versioned filename returned by build.sh.
 ./package.sh dist/asp-extractor-vVERSION-linux-amd64
 ```
 
-`build.sh` emits `dist/asp-extractor-vVERSION-linux-amd64`; `package.sh` creates the versioned `.tar.gz` containing the executable, LICENSE, short README and this full guide. The build uses the existing `common-tools/asp-installer` firmware/parser/cache source files in a **temporary** build directory instead of maintaining duplicate parsing code. The produced Linux x86_64 binary is statically linked (`CGO_ENABLED=0`) and needs no Go installation, system SSH/SCP utilities, mounts or native ext4 drivers at runtime. Race tests use a C toolchain. Building/packaging does not publish a release or deploy anything.
+`build.sh` emits `dist/asp-extractor-vVERSION-linux-amd64`; `package.sh` creates the versioned `.tar.gz` containing the executable, LICENSE, short README and this full guide. The produced Linux x86_64 binary is statically linked (`CGO_ENABLED=0`) and needs no Go installation, system SSH/SCP utilities, mounts or native ext4 drivers at runtime. Race tests use a C toolchain. Building/packaging does not publish a release or deploy anything.
 
 ## Input compatibility and safety
 
-Supported OTA formats are compatible **full** Android block OTA ZIPs using supported transfer-list operations and partition layouts, plus supported full file-tree ZIPs. Incremental/delta OTA images, unknown partitions and `payload.bin`-only packages are rejected. Local ZIPs are limited to **2 GiB**. Backup extraction supports the raw ext4 directory layouts above, with no host filesystem mount required.
+Supported inputs are compatible **full** Android OTA ZIPs and directories containing supported raw ext4 partition images. Incremental/delta OTAs, `payload.bin`-only packages and unsupported image layouts are rejected. Local OTA ZIPs are limited to **2 GiB**. Backup extraction requires no host filesystem mount.
 
-The cache validates owner/modes, absence of unexpected files and symlinks, manifest and **all** artifact hashes before reuse. SHA-256 checks do not establish official Amazon firmware authenticity; you must verify the original source independently. The inherited HTTP downloader does **not** perform normal HTTPS certificate/hostname checks. SSH delivery requires a pinned host key and verified transfers; there is no bypass for SSH host-key verification.
+The cache validates owner/modes, absence of unexpected files and symlinks, manifest and **all** artifact hashes before reuse. SHA-256 checks do not establish official Amazon firmware authenticity; you must verify the original source independently. The OTA downloader does **not** validate HTTPS certificates or hostnames. SSH delivery requires a pinned host key and verified transfers; there is no bypass for SSH host-key verification.
 
-## Desktop OS extension
+## Host compatibility
 
-Linux x86_64 is the current reference host. Host-specific implementation is isolated under `common-tools/asp-extractor/internal/hostos/` with the existing `linux/` adapter and `select_linux.go` build selector. The shared CLI, parser, ELF closure, cache semantics and SSH protocol can be reused by new platforms, but secure Linux filesystem locking/publication operations need corresponding OS adapters. **macOS and Windows implementations do not exist yet** and must be implemented and tested independently; the current binary cannot be claimed to support them.
+Only **Linux x86_64** is currently supported. The available executable does not run on macOS or Windows.
 
 For Echo runtime installation, updates, rollback, maintenance and storage layout, read [ASP-INSTALL.md](ASP-INSTALL.md). For release versioning/publishing policy, read [RELEASING.md](RELEASING.md).

@@ -208,8 +208,8 @@ func TestHelperDependenciesCheckedAfterExtraction(t *testing.T) {
 
 func TestUnknownDeployAppExplainsCorrectCommands(t *testing.T) {
 	args := []string{
-		"deploy-app", "--host", "root@10.20.30.152",
-		"--asp-release", "/home/gptlab/dev/asp-v33-review-final-release/rook/frankenasp-v3.2.261101221132-rook-arm32.tar.gz",
+		"deploy-app", "--host", "root@echo.invalid",
+		"--asp-release", "/tmp/frankenasp-test-release.tar.gz",
 		"--firmware", "690918120", "--cache-dir", "/tmp/test-cache",
 	}
 	for _, invocation := range [][]string{args, args[:len(args)-2], append([]string{"--cache-dir", "/tmp/test-cache"}, args...)} {
@@ -222,7 +222,7 @@ func TestUnknownDeployAppExplainsCorrectCommands(t *testing.T) {
 
 func TestDeployAspRejectsUnusedFirmwareSelector(t *testing.T) {
 	// No SSH or filesystem access must occur for an invalid argument combination.
-	err := runCLI([]string{"deploy-asp", "--host", "root@10.20.30.152", "--firmware", "690918120", "--asp-release", "/tmp/unused.tar.gz"})
+	err := runCLI([]string{"deploy-asp", "--host", "root@echo.invalid", "--firmware", "690918120", "--asp-release", "/tmp/unused.tar.gz"})
 	if err == nil || !strings.Contains(err.Error(), "deploy-all") || !strings.Contains(err.Error(), "--firmware") {
 		t.Fatalf("deploy-asp silently ignored firmware: %v", err)
 	}

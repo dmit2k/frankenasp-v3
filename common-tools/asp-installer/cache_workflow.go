@@ -50,43 +50,43 @@ func otaSourceCodename(path string) (string, error) {
 	return fromOTA, nil
 }
 
-// A missing ZIP-level identity is not evidence of a match. Before returning
-// an early cache hit, a caller with an explicit platform must also validate
-// available filesystem build.prop metadata.
-func localOTACacheHitAllowed(path, requested string) (bool, error) {
+// Check inexpensive ZIP-level identity first. A match here is not proof that
+// the internal filesystem agrees; all early hits use checkAvailableOTAIdentity.
+func checkZIPOTAIdentity(path, requested string) error {
 	detected, err := otaSourceCodename(path)
 	if errors.Is(err, zip.ErrFormat) {
 		// Historical cache fixtures may be opaque source bytes; attempt the
 		// SHA-256 lookup, and let the normal reader reject an uncached input.
-		return true, nil
+		return nil
 	}
 	if err != nil {
-		return false, err
+		return err
 	}
-	if _, err := resolveCodename(requested, detected); err != nil {
-		return false, err
-	}
-	return requested == "" || detected != "", nil
+	_, err = resolveCodename(requested, detected)
+	return err
 }
 
-// Existing URL caches can precede a downloaded ZIP, and earlier versions
-// allowed non-ZIP byte fixtures in the archive index. If a valid ZIP is
-// available, reject explicit platform conflicts with its source metadata.
+// Check available ZIP and filesystem identities before reusing a matching
+// extracted cache with an explicit --platform. This reads build.prop through
+// the existing selective block reader without re-extracting factory files.
+// Legacy opaque cached source fixtures have no inspectable OTA identity.
 func checkAvailableOTAIdentity(path, requested string) error {
 	if requested == "" {
 		return nil
 	}
-	known, err := localOTACacheHitAllowed(path, requested)
-	if err != nil || known {
-		return err
-	}
-	// Block OTAs without standalone identity metadata may still record a
-	// device in the filesystem. Validate that before returning a cache hit.
 	src, handle, err := openOTA(path, requested)
+	if errors.Is(err, zip.ErrFormat) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	defer handle.Close()
+	// File-tree identities are already directly available from ZIP members.
+	// Use their bounded reader, which also accepts historical empty fixtures.
+	if src.kind == "ZIP_FILE_TREE" {
+		return checkZIPOTAIdentity(path, requested)
+	}
 	props, err := readSystemBuildProp(src)
 	if err != nil {
 		return err
@@ -115,11 +115,8 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	}
 	urlHash := ""
 	sourceHash := ""
-	earlyHitAllowed := true
 	if sourcePath != "" {
-		var err error
-		earlyHitAllowed, err = localOTACacheHitAllowed(sourcePath, platform)
-		if err != nil {
+		if err := checkZIPOTAIdentity(sourcePath, platform); err != nil {
 			return cacheResult{}, "", nil, err
 		}
 	}
@@ -136,7 +133,7 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 	if !refresh {
 		cached, e := findCache(cacheDir, platform, sourceHash, urlHash)
 		if e == nil {
-			if sourcePath != "" && !earlyHitAllowed {
+			if sourcePath != "" {
 				if err := checkAvailableOTAIdentity(sourcePath, platform); err != nil {
 					return cacheResult{}, "", nil, err
 				}
@@ -230,13 +227,15 @@ func loadExtracted(ctx context.Context, cacheDir, platform, sourcePath, sourceUR
 			return cacheResult{}, source, cleanup, e
 		}
 		// A downloaded source must be checked before a hash-only cache hit.
-		allowReuse, identityErr := localOTACacheHitAllowed(source, platform)
-		if identityErr != nil {
-			return cacheResult{}, source, cleanup, identityErr
+		if err := checkZIPOTAIdentity(source, platform); err != nil {
+			return cacheResult{}, source, cleanup, err
 		}
-		if !refresh && allowReuse {
+		if !refresh {
 			found, er := findCache(cacheDir, platform, sourceHash, "")
 			if er == nil {
+				if err := checkAvailableOTAIdentity(source, platform); err != nil {
+					return cacheResult{}, source, cleanup, err
+				}
 				m.Note("Downloaded OTA content matches an existing verified cache")
 				describeCache(m, found)
 				if deleteOTA {

@@ -7,10 +7,21 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/dmit2k/frankenasp-v3/internal/asp"
 )
 
-const destination = "/data/techo5-linux/external-asp"
+var destination = "/data/techo5-linux/external-asp"
+
 const vendorBundled = "ASP1-LAUNCHER-V1\nvendor_mode=OWNER_BUNDLED_MATCHED\nsource_pair=OWNER_VERIFIED\n"
+
+// Narrow local test seams only. Production always uses the real system chown.
+var runtimeChown = os.Chown
+var runtimeLchown = os.Lchown
+
+// Production-managed nodes are root-owned; isolated mutation tests substitute
+// the current test UID without bypassing the filesystem walk.
+var runtimeOwnerUID uint32 = 0
 
 func ownedFile(path string, data []byte, mode os.FileMode) error {
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
@@ -22,7 +33,7 @@ func ownedFile(path string, data []byte, mode os.FileMode) error {
 	if e := os.Chmod(path, mode); e != nil {
 		return e
 	}
-	if e := os.Chown(path, 0, 0); e != nil {
+	if e := runtimeChown(path, 0, 0); e != nil {
 		return e
 	}
 	f, e := os.Open(path)
@@ -43,18 +54,11 @@ func ensureOwnedDirs(root string) error {
 		if e := os.Chmod(p, 0700); e != nil {
 			return e
 		}
-		return os.Chown(p, 0, 0)
+		return runtimeChown(p, 0, 0)
 	})
 }
-func fsyncDir(p string) error {
-	f, e := os.Open(p)
-	if e != nil {
-		return e
-	}
-	defer f.Close()
-	return f.Sync()
-}
-func writeRootWithMode(stage string, platform string, items map[string][]byte, assets string, kind string, mode string) error {
+func writeRootWithPlan(stage string, items map[string][]byte, plan asp.AssetPlan, kind string, mode string, miccal []int) error {
+	platform := plan.Platform
 	root := filepath.Join(stage, "lib", "rootfs")
 	directories := []string{"bin", "etc", "lib/rootfs/factory", "lib/rootfs/system/bin", "lib/rootfs/system/lib", "lib/rootfs/vendor/etc/audio-algorithms", "lib/rootfs/proc/idme", "lib/rootfs/sys", "lib/rootfs/.realproc", "lib/rootfs/dev", "lib/rootfs/data"}
 	for _, n := range directories {
@@ -63,7 +67,10 @@ func writeRootWithMode(stage string, platform string, items map[string][]byte, a
 		}
 	}
 	for p, raw := range items {
-		if !safePath(p) || !strings.HasPrefix(p, "system/") && !strings.HasPrefix(p, "vendor/") {
+		if mode == "live" && strings.HasPrefix(p, "vendor/") {
+			continue
+		}
+		if !asp.SafePath(p) || !strings.HasPrefix(p, "system/") && !strings.HasPrefix(p, "vendor/") {
 			return fmt.Errorf("invalid runtime filename: %s", p)
 		}
 		mode := os.FileMode(0600)
@@ -74,45 +81,32 @@ func writeRootWithMode(stage string, platform string, items map[string][]byte, a
 			return e
 		}
 	}
-	for _, asset := range []struct {
-		src, dst string
-		mode     os.FileMode
-	}{
-		{"external-asp", "bin/external-asp", 0500}, {"asp1-child", "lib/rootfs/factory/asp1-child", 0500},
-	} {
-		raw, e := os.ReadFile(filepath.Join(assets, asset.src))
-		if e != nil {
-			return e
+	for _, asset := range plan.Installed {
+		raw, ok := plan.Files[asset.Path]
+		if !ok {
+			return fmt.Errorf("verified asset snapshot missing %s", asset.Path)
 		}
-		if e = ownedFile(filepath.Join(stage, asset.dst), raw, asset.mode); e != nil {
-			return e
+		mode := os.FileMode(0600)
+		if asset.Role == "launcher" || asset.Role == "child" {
+			mode = 0500
 		}
-	}
-	if platform == "athena" {
-		raw, e := os.ReadFile(filepath.Join(assets, "channel-map"))
-		if e != nil {
-			return e
-		}
-		if e = validateChannelMap(raw); e != nil {
-			return e
-		}
-		if e = ownedFile(filepath.Join(root, "factory/channel-map"), raw, 0600); e != nil {
+		if e := ownedFile(filepath.Join(stage, filepath.FromSlash(asset.InstallTo)), raw, mode); e != nil {
 			return e
 		}
 	}
 	if e := ownedFile(filepath.Join(stage, "etc/launcher.profile"), []byte(profileForMode(mode)), 0600); e != nil {
 		return e
 	}
-	for name, target := range aliasTargets() {
+	for name, target := range aliasTargetsForMiccal(miccal) {
 		p := filepath.Join(root, "proc", name)
 		if e := os.Symlink(target, p); e != nil {
 			return e
 		}
-		if e := os.Lchown(p, 0, 0); e != nil {
+		if e := runtimeLchown(p, 0, 0); e != nil {
 			return e
 		}
 	}
-	receipt := map[string]any{"schema": "ASP1-INSTALLER-V3", "platform": platform, "runtime_source": kind, "proprietary_binaries_distributed": false, "installed_at": time.Now().UTC().Format(time.RFC3339), "release_revision": revision, "vendor_mode": mode}
+	receipt := map[string]any{"schema": "ASP1-INSTALLER-V3", "platform": platform, "runtime_source": kind, "proprietary_binaries_distributed": false, "installed_at": time.Now().UTC().Format(time.RFC3339), "release_revision": revision, "vendor_mode": mode, "miccal_aliases": miccal, "miccal_inventory_version": 1}
 	blob, _ := json.MarshalIndent(receipt, "", "  ")
 	if e := ownedFile(filepath.Join(stage, "etc/installer-receipt.json"), append(blob, '\n'), 0600); e != nil {
 		return e
@@ -125,7 +119,7 @@ func writeRootWithMode(stage string, platform string, items map[string][]byte, a
 			return e
 		}
 		if info.IsDir() {
-			return fsyncDir(p)
+			return asp.FsyncDir(p)
 		}
 		return nil
 	})

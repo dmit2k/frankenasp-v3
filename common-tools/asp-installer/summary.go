@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/dmit2k/frankenasp-v3/internal/asp"
 	"io"
 )
 
@@ -92,6 +93,11 @@ func printStatus(w io.Writer, v map[string]any) {
 			fmt.Fprintln(w, "  Fire OS: not recorded")
 		}
 		fmt.Fprintf(w, "  Amazon firmware build: %s\n  Extraction: %s (%d verified files)\n  Cache path: %s\n", c.Firmware, c.State, c.FactoryFiles, c.Path)
+		if c.ASPLibs != "" {
+			fmt.Fprintf(w, "  ASP libs: %s\n", c.ASPLibs)
+		} else {
+			fmt.Fprintln(w, "  ASP libs: unavailable")
+		}
 		if c.OTAImage != "" {
 			fmt.Fprintf(w, "  Downloaded OTA: %s\n", c.OTAImage)
 		}
@@ -107,7 +113,7 @@ func printStatus(w io.Writer, v map[string]any) {
 		if img.Firmware != "" {
 			fmt.Fprintf(w, "  Amazon build: %s\n", img.Firmware)
 		}
-		fmt.Fprintf(w, "  OTA: %s (%s, %d MiB)\n", img.Path, img.State, mbCeil(uint64(img.SizeBytes)))
+		fmt.Fprintf(w, "  OTA: %s (%s, %d MiB)\n", img.Path, img.State, asp.MbCeil(uint64(img.SizeBytes)))
 		if img.Error != "" {
 			fmt.Fprintf(w, "  WARNING: %s\n", img.Error)
 		}

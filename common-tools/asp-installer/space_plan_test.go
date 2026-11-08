@@ -31,10 +31,10 @@ func TestUnifiedSpacePlanAllRolesSameFilesystem(t *testing.T) {
 	if !strings.Contains(need.Role, "OTA download (size pending)") {
 		t.Fatalf("should not imply OTA bytes known: %+v", need)
 	}
-	if budget.need.Cache != 168*MiB || budget.need.Rootfs != 168*MiB || budget.need.Backup != 20*MiB || budget.need.Path != "/downloads" {
-		t.Fatalf("wrong download budget %+v", budget.need)
+	if budget.Need.Cache != 168*MiB || budget.Need.Rootfs != 168*MiB || budget.Need.Backup != 20*MiB || budget.Need.Path != "/downloads" {
+		t.Fatalf("wrong download budget %+v", budget.Need)
 	}
-	known := budget.need
+	known := budget.Need
 	known.OTA = 1100 * MiB
 	report, e := evaluateSpace(1600*MiB, known)
 	if e != nil || report.RequiredMiB != 1520 {
@@ -58,11 +58,11 @@ func TestUnifiedSpacePlanSeparatedFilesystems(t *testing.T) {
 	if needs[1].Rootfs != 168*MiB || needs[1].Backup != 20*MiB || needs[1].Cache != 0 || needs[1].Reserve != 64*MiB {
 		t.Fatalf("installation volume: %+v", needs[1])
 	}
-	if budget.need.Rootfs != 0 || budget.need.Cache != 0 || budget.need.Backup != 0 || budget.need.Reserve != 64*MiB {
-		t.Fatalf("OTA download must not reserve other device's space: %+v", budget.need)
+	if budget.Need.Rootfs != 0 || budget.Need.Cache != 0 || budget.Need.Backup != 0 || budget.Need.Reserve != 64*MiB {
+		t.Fatalf("OTA download must not reserve other device's space: %+v", budget.Need)
 	}
-	budget.need.OTA = 1100 * MiB
-	report, e := evaluateSpace(1164*MiB, budget.need)
+	budget.Need.OTA = 1100 * MiB
+	report, e := evaluateSpace(1164*MiB, budget.Need)
 	if e != nil || report.RequiredMiB != 1164 {
 		t.Fatalf("OTA volume budget wrong: %+v %v", report, e)
 	}
@@ -72,8 +72,8 @@ func TestUnifiedSpacePlanSharedCacheAndDownload(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if len(needs) != 2 || budget.need.Cache != 168*MiB || budget.need.Rootfs != 0 || budget.need.Backup != 0 {
-		t.Fatalf("cache+download grouping wrong: %+v %+v", needs, budget.need)
+	if len(needs) != 2 || budget.Need.Cache != 168*MiB || budget.Need.Rootfs != 0 || budget.Need.Backup != 0 {
+		t.Fatalf("cache+download grouping wrong: %+v %+v", needs, budget.Need)
 	}
 }
 func TestUnifiedSpacePlanLocalOTADoesNotDuplicateFileBytes(t *testing.T) {
@@ -90,21 +90,21 @@ func TestUnifiedSpacePlanInspectOnly(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if len(needs) != 1 || needs[0].Rootfs != 0 || needs[0].Cache != 168*MiB || needs[0].Reserve != 64*MiB || budget.need.Rootfs != 0 {
-		t.Fatalf("inspect reserved installation: %+v %+v", needs, budget.need)
+	if len(needs) != 1 || needs[0].Rootfs != 0 || needs[0].Cache != 168*MiB || needs[0].Reserve != 64*MiB || budget.Need.Rootfs != 0 {
+		t.Fatalf("inspect reserved installation: %+v %+v", needs, budget.Need)
 	}
 }
 func TestContentLengthPreflightReportsFullSplit(t *testing.T) {
 	dir := t.TempDir()
 	var output bytes.Buffer
-	meter := &progressMeter{out: &output, done: make(chan struct{})}
+	meter := &progressMeter{Out: &output, Done: make(chan struct{})}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "16")
 		w.WriteHeader(200)
 		_, _ = w.Write([]byte("0123456789abcdef"))
 	}))
 	defer server.Close()
-	budget := downloadBudget{need: diskNeed{Path: dir, Cache: 168 * MiB, Rootfs: 168 * MiB, Backup: 20 * MiB, Reserve: 64 * MiB}}
+	budget := downloadBudget{Need: diskNeed{Path: dir, Cache: 168 * MiB, Rootfs: 168 * MiB, Backup: 20 * MiB, Reserve: 64 * MiB}}
 	name, cleanup, e := downloadWithBudget(context.Background(), server.URL+"/update.bin", dir, budget, meter)
 	meter.Close()
 	if e != nil {
@@ -124,14 +124,14 @@ func TestContentLengthPreflightReportsFullSplit(t *testing.T) {
 func TestPreflightWarnsThatOTAIsNotIncludedYet(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
-	meter := &progressMeter{out: &out, done: make(chan struct{})}
+	meter := &progressMeter{Out: &out, Done: make(chan struct{})}
 	budget, e := preflightCacheAndOTA(dir, dir, "inspect", true, false, meter)
 	meter.Close()
 	if e != nil {
 		t.Fatal(e)
 	}
-	if budget.need.Cache != 168*MiB || budget.need.Rootfs != 0 {
-		t.Fatalf("wrong inspect-only budget: %+v", budget.need)
+	if budget.Need.Cache != 168*MiB || budget.Need.Rootfs != 0 {
+		t.Fatalf("wrong inspect-only budget: %+v", budget.Need)
 	}
 	log := out.String()
 	if !strings.Contains(log, "OTA size unknown until HTTP Content-Length") || !strings.Contains(log, "OTA 0, extraction cache 168, staged runtime 0, backup 0, safety reserve 64 MiB") {

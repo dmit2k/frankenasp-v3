@@ -11,6 +11,9 @@ import (
 	"strings"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/dmit2k/frankenasp-v3/internal/asp"
+	"github.com/dmit2k/frankenasp-v3/platforms"
 )
 
 type difference struct {
@@ -70,110 +73,48 @@ func vendorReadOnly() error {
 	}
 	return nil
 }
-func chooseVendorMode(platform, requested string, items map[string][]byte) (mode string, inspection compareResult, e error) {
+func chooseVendorMode(platform, requested string, items map[string][]byte) (string, compareResult, error) {
+	c, ok, err := platforms.LegacyContract(platform)
+	if err != nil {
+		return "", compareResult{}, err
+	}
+	if !ok {
+		return "", compareResult{}, errors.New("unknown legacy vendor mode contract")
+	}
+	return chooseVendorModeCapabilities(asp.ReleaseRuntime{VendorModes: c.Runtime.VendorModes, LibrarySearch: c.Runtime.LibrarySearch}, requested, items)
+}
+func chooseVendorModeCapabilities(runtime asp.ReleaseRuntime, requested string, items map[string][]byte) (string, compareResult, error) {
+	return chooseVendorModeForRoot(runtime, requested, items, "/vendor", vendorReadOnly)
+}
+func chooseVendorModeForRoot(runtime asp.ReleaseRuntime, requested string, items map[string][]byte, root string, readOnly func() error) (string, compareResult, error) {
+	var inspection compareResult
 	if requested == "" {
 		requested = "bundled"
-	}
-	if platform == "rook" {
-		if requested != "bundled" && requested != "auto" {
-			return "", inspection, errors.New("Rook requires bundled vendor; live-vendor mode is unsupported")
-		}
-		return "bundled", inspection, nil
 	}
 	if requested != "bundled" && requested != "live" && requested != "auto" {
 		return "", inspection, errors.New("--vendor-mode must be bundled, live or auto")
 	}
-	if requested == "bundled" {
+	allowed := false
+	for _, v := range runtime.VendorModes {
+		if v == "live" {
+			allowed = true
+		}
+	}
+	if requested == "live" && !allowed {
+		return "", inspection, errors.New("launcher does not support live vendor")
+	}
+	if requested == "bundled" || !allowed {
 		return "bundled", inspection, nil
 	}
-	inspection = compareVendor(items, "/vendor")
-	valid := inspection.Matching && vendorReadOnly() == nil && inspection.Compared > 0
+	inspection = compareVendor(items, root)
+	valid := inspection.Matching && inspection.Compared > 0 && readOnly() == nil
 	if valid {
 		return "live", inspection, nil
 	}
 	if requested == "live" {
-		return "", inspection, fmt.Errorf("live vendor differs from OTA, is unavailable, or not mounted read-only")
+		return "", inspection, errors.New("live vendor mismatch or not mounted read-only")
 	}
 	return "bundled", inspection, nil
-}
-func aliasTargets() map[string]string {
-	aliases := map[string]string{"self": "/.realproc/self", "sys": "/.realproc/sys", "cpuinfo": "/.realproc/cpuinfo", "device-tree": "/sys/firmware/devicetree/base"}
-	for i := 0; i < 4; i++ {
-		aliases[fmt.Sprintf("idme/miccal.%d", i)] = fmt.Sprintf("/proc/device-tree/idme/miccal.%d/value", i)
-	}
-	return aliases
-}
-func compareInstalled(platform, assets string, items map[string][]byte, mode string, installed string) (compareResult, error) {
-	result := compareResult{Changed: []difference{}, Mode: mode}
-	if st, e := os.Lstat(installed); e != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
-		return result, errors.New("external-asp directory not installed or unsafe")
-	}
-	expected := map[string][]byte{}
-	for p, raw := range items {
-		if mode == "live" && strings.HasPrefix(p, "vendor/") {
-			continue
-		}
-		expected["lib/rootfs/"+p] = raw
-	}
-	for _, pair := range [][2]string{{"external-asp", "bin/external-asp"}, {"asp1-child", "lib/rootfs/factory/asp1-child"}} {
-		raw, e := os.ReadFile(filepath.Join(assets, pair[0]))
-		if e != nil {
-			return result, e
-		}
-		expected[pair[1]] = raw
-	}
-	if platform == "athena" {
-		raw, e := os.ReadFile(filepath.Join(assets, "channel-map"))
-		if e != nil {
-			return result, e
-		}
-		expected["lib/rootfs/factory/channel-map"] = raw
-	}
-	expected["etc/launcher.profile"] = []byte(profileForMode(mode))
-	for p, raw := range expected {
-		result.check(p, raw, installed)
-	}
-	// Verify the required calibration aliases without resolving them on the host.
-	expectedLinks := map[string]string{}
-	for name, target := range aliasTargets() {
-		path := "lib/rootfs/proc/" + name
-		expectedLinks[path] = target
-		result.Compared++
-		actual, e := os.Readlink(filepath.Join(installed, filepath.FromSlash(path)))
-		if e != nil || actual != target {
-			result.Changed = append(result.Changed, difference{path, "invalid-or-missing-symlink"})
-		}
-	}
-	// Detect unexpected runtime regular files and symlinks without following them.
-	root := filepath.Join(installed, "lib/rootfs")
-	e := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if !d.Type().IsRegular() && d.Type()&os.ModeSymlink == 0 {
-			return nil
-		}
-		rel, e := filepath.Rel(installed, path)
-		if e != nil {
-			return e
-		}
-		name := filepath.ToSlash(rel)
-		if d.Type().IsRegular() {
-			if _, ok := expected[name]; !ok {
-				result.Changed = append(result.Changed, difference{name, "extra-installed"})
-			}
-		} else if d.Type()&os.ModeSymlink != 0 {
-			if _, ok := expectedLinks[name]; !ok {
-				result.Changed = append(result.Changed, difference{name, "extra-symlink"})
-			}
-		}
-		return nil
-	})
-	if e != nil {
-		return result, e
-	}
-	result.finish()
-	return result, nil
 }
 func profileForMode(mode string) string {
 	if mode == "live" {

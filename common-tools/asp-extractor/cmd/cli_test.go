@@ -308,3 +308,21 @@ func TestFactoryCacheSelectorNormalizesUnlistedPlatform(t *testing.T) {
 		t.Fatalf("generic platform selector case normalization: %v", err)
 	}
 }
+
+func TestRelativeCLIPathForListAndVerify(t *testing.T) {
+	root := t.TempDir()
+	cacheRoot := filepath.Join(root, "asp-installer-cache")
+	cached := sampleCache(t, cacheRoot, "athena", "PS75741-7080", strings.Repeat("f", 64))
+	t.Chdir(root)
+	for _, args := range [][]string{
+		{"list", "--cache-dir", "./asp-installer-cache/"},
+		{"verify", "--cache-dir", "./asp-installer-cache/", "--firmware", filepath.Base(cached.Path)},
+	} {
+		if err := runCLI(args); err != nil {
+			t.Fatalf("relative CLI args %v: %v", args, err)
+		}
+	}
+	if err := runCLI([]string{"list", "--cache-dir", "/"}); err == nil {
+		t.Fatal("accepted filesystem root as cache directory")
+	}
+}

@@ -3,9 +3,7 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +17,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/dmit2k/frankenasp-v3/internal/asp"
 )
 
 const backupFolder = "asp-installer-backups"
@@ -26,15 +26,9 @@ const generationPrefix = ".external-asp-generation-v3-"
 
 var generationName = regexp.MustCompile("^\\.external-asp-generation-v3-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}$")
 
-func nonce() string {
-	b := make([]byte, 6)
-	if _, e := rand.Read(b); e != nil {
-		panic(e)
-	}
-	return hex.EncodeToString(b)
-}
-func generationID() string { return time.Now().UTC().Format("20060102T150405Z") + "-" + nonce() }
-func parentPath() string   { return filepath.Dir(destination) }
+var generationID = func() string { return time.Now().UTC().Format("20060102T150405Z") + "-" + asp.Nonce() }
+
+func parentPath() string { return filepath.Dir(destination) }
 func knownGenerations() []string {
 	items, e := os.ReadDir(parentPath())
 	if e != nil {
@@ -80,8 +74,10 @@ func backupArchives() []string {
 	return out
 }
 
+var runtimeIsRoot = func() bool { return os.Geteuid() == 0 }
+
 func withLock(fn func() error) error {
-	if os.Geteuid() != 0 {
+	if !runtimeIsRoot() {
 		return errors.New("mutation requires root")
 	}
 	if incomplete := incompleteOperations(); len(incomplete) > 0 {
@@ -134,7 +130,7 @@ func validateManaged(root string) error {
 		return errors.New("unknown launcher profile")
 	}
 	nodes := 0
-	return filepath.Walk(root, func(path string, st os.FileInfo, e error) error {
+	walkErr := filepath.Walk(root, func(path string, st os.FileInfo, e error) error {
 		if e != nil {
 			return e
 		}
@@ -143,7 +139,7 @@ func validateManaged(root string) error {
 			return errors.New("managed tree node count too high")
 		}
 		sys, ok := st.Sys().(*syscall.Stat_t)
-		if !ok || sys.Uid != 0 {
+		if !ok || sys.Uid != runtimeOwnerUID {
 			return fmt.Errorf("foreign-owned managed node: %s", path)
 		}
 		if st.Mode()&os.ModeSymlink == 0 && st.Mode().Perm()&0022 != 0 {
@@ -166,6 +162,10 @@ func validateManaged(root string) error {
 			return fmt.Errorf("special device/socket inside managed runtime: %s", path)
 		}
 	})
+	if walkErr != nil {
+		return walkErr
+	}
+	return validateInstalledMiccalAliases(root)
 }
 func archiveBackup(root string, m *progressMeter) (string, error) {
 	if e := validateManaged(root); e != nil {
@@ -180,18 +180,18 @@ func archiveBackup(root string, m *progressMeter) (string, error) {
 		return "", e
 	}
 	ss, ok := st.Sys().(*syscall.Stat_t)
-	if !ok || !st.IsDir() || st.Mode().Perm() != 0700 || ss.Uid != 0 {
+	if !ok || !st.IsDir() || st.Mode().Perm() != 0700 || ss.Uid != runtimeOwnerUID {
 		return "", errors.New("untrusted backup folder")
 	}
 	estimated, e := estimateTreeBackup(root)
 	if e != nil {
 		return "", e
 	}
-	if e = requireSpace(diskNeed{Role: "backup filesystem", Path: parentPath(), Backup: estimated, Reserve: spaceReserve}, m); e != nil {
+	if e = asp.RequireSpace(diskNeed{Role: "backup filesystem", Path: parentPath(), Backup: estimated, Reserve: spaceReserve}, m); e != nil {
 		return "", e
 	}
 	m.Phase("Archiving installed external-asp before update")
-	f, e := os.OpenFile(filepath.Join(archiveDir, ".partial-"+nonce()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, e := os.OpenFile(filepath.Join(archiveDir, ".partial-"+asp.Nonce()), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if e != nil {
 		return "", e
 	}
@@ -209,7 +209,7 @@ func archiveBackup(root string, m *progressMeter) (string, error) {
 		if e != nil {
 			return e
 		}
-		if !safePath(filepath.ToSlash(relative)) {
+		if !asp.SafePath(filepath.ToSlash(relative)) {
 			return errors.New("invalid backup member path")
 		}
 		link := ""
@@ -277,7 +277,7 @@ func archiveBackup(root string, m *progressMeter) (string, error) {
 	if e = unix.Renameat2(unix.AT_FDCWD, temporary, unix.AT_FDCWD, final, unix.RENAME_NOREPLACE); e != nil {
 		return "", e
 	}
-	if e = fsyncDir(archiveDir); e != nil {
+	if e = asp.FsyncDir(archiveDir); e != nil {
 		return final, e
 	}
 	m.Note(fmt.Sprintf("Backup saved: %s", final))
@@ -290,7 +290,7 @@ func removeManaged(root string) error {
 	if e := os.RemoveAll(root); e != nil {
 		return e
 	}
-	return fsyncDir(filepath.Dir(root))
+	return asp.FsyncDir(filepath.Dir(root))
 }
 func generationInfo() []map[string]any {
 	out := []map[string]any{}
@@ -343,7 +343,7 @@ func installedVersion() map[string]any {
 func safeGeneration(root string) bool {
 	return generationName.MatchString(filepath.Base(root)) && filepath.Dir(root) == parentPath()
 }
-func installOrUpdate(platform, assets string, items map[string][]byte, source, mode string, update, skipBackup, restart bool, m *progressMeter) (map[string]any, error) {
+func installOrUpdatePlan(plan asp.AssetPlan, items map[string][]byte, source, mode string, update, skipBackup, restart bool, m *progressMeter) (map[string]any, error) {
 	result := map[string]any{"action": "install", "backup": nil}
 	if update {
 		result["action"] = "update"
@@ -372,7 +372,7 @@ func installOrUpdate(platform, assets string, items map[string][]byte, source, m
 		if exists {
 			sourceID, _ = idOf(destination)
 		}
-		if err := preflightBuild(result["action"].(string), platform, mode, assets, items, skipBackup, m); err != nil {
+		if err := preflightBuildPlan(result["action"].(string), mode, plan, items, skipBackup, m); err != nil {
 			return err
 		}
 		m.Phase("Preparing separate immutable runtime generation")
@@ -393,13 +393,17 @@ func installOrUpdate(platform, assets string, items map[string][]byte, source, m
 			}
 			prepared[p] = v
 		}
-		if e = writeRootWithMode(stage, platform, prepared, assets, source, mode); e != nil {
+		miccal, err := discoverMiccal()
+		if err != nil {
+			return err
+		}
+		if e = writeRootWithPlan(stage, prepared, plan, source, mode, miccal); e != nil {
 			return e
 		}
 		if e = validateManaged(stage); e != nil {
 			return e
 		}
-		if e = fsyncDir(stage); e != nil {
+		if e = asp.FsyncDir(stage); e != nil {
 			return e
 		}
 		if exists {
@@ -415,7 +419,7 @@ func installOrUpdate(platform, assets string, items map[string][]byte, source, m
 			if e != nil || now != sourceID {
 				return errors.New("installed runtime identity changed during update")
 			}
-			diff, e := compareInstalled(platform, assets, items, mode, destination)
+			diff, e := compareInstalledWithPlan(plan, items, mode, destination, miccal)
 			if e != nil {
 				return e
 			}
@@ -432,12 +436,15 @@ func installOrUpdate(platform, assets string, items map[string][]byte, source, m
 				}
 				result["backup"] = backup
 			}
+			if e = verifyLiveSourceBeforePublish(mode, items); e != nil {
+				return e
+			}
 			m.Phase("Atomically exchanging new and previous runtime")
 			if e = unix.Renameat2(unix.AT_FDCWD, stage, unix.AT_FDCWD, destination, unix.RENAME_EXCHANGE); e != nil {
 				return e
 			}
 			cleanup = false // stage is now the old runtime; never delete after an exchange
-			if e = fsyncDir(parentPath()); e != nil {
+			if e = asp.FsyncDir(parentPath()); e != nil {
 				return e
 			}
 			gen := filepath.Join(parentPath(), generationPrefix+generationID())
@@ -454,6 +461,9 @@ func installOrUpdate(platform, assets string, items map[string][]byte, source, m
 			if len(roots) > 0 {
 				return errors.New("unexpected active generation without current installation")
 			}
+			if e = verifyLiveSourceBeforePublish(mode, items); e != nil {
+				return e
+			}
 			m.Phase("Atomically publishing first installation")
 			if e = unix.Renameat2(unix.AT_FDCWD, stage, unix.AT_FDCWD, destination, unix.RENAME_NOREPLACE); e != nil {
 				return e
@@ -461,11 +471,27 @@ func installOrUpdate(platform, assets string, items map[string][]byte, source, m
 			cleanup = false
 			result["changed"] = true
 		}
-		return fsyncDir(parentPath())
+		return asp.FsyncDir(parentPath())
 	})
 	if e != nil {
 		return result, e
 	}
 	result["current"] = installedVersion()
 	return result, nil
+}
+
+// Re-validate live vendor source immediately before the atomic publication.
+// A previously matching read-only mount is not a permanent byte guarantee.
+func verifyLiveSourceBeforePublish(mode string, items map[string][]byte) error {
+	if mode != "live" {
+		return nil
+	}
+	observed := compareVendor(items, "/vendor")
+	if observed.Compared == 0 || !observed.Matching {
+		return errors.New("live vendor no longer matches selected factory source")
+	}
+	if err := vendorReadOnly(); err != nil {
+		return fmt.Errorf("live vendor changed before publication: %w", err)
+	}
+	return nil
 }

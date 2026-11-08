@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/dmit2k/frankenasp-v3/internal/asp"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,7 +55,7 @@ func runCLI(args []string) error {
 	f := flag.NewFlagSet("asp-extractor "+cmd, flag.ContinueOnError)
 	f.StringVar(&o.platform, "platform", "", "optional Echo codename; checked against source metadata if known")
 	f.StringVar(&o.firmware, "firmware", "", "firmware build/Fire OS version or exact cache directory name")
-	f.StringVar(&o.cacheDir, "cache-dir", o.cacheDir, "absolute PC asp-installer-cache root")
+	f.StringVar(&o.cacheDir, "cache-dir", o.cacheDir, "PC asp-installer-cache root (absolute or relative)")
 	f.StringVar(&o.ota, "ota", "", "local full OTA ZIP")
 	f.StringVar(&o.otaURL, "ota-url", "", "explicit full OTA URL (owner-selected)")
 	f.StringVar(&o.backup, "backup-dir", "", "directory holding raw TECHO5 backup images")
@@ -101,10 +102,17 @@ func runCLI(args []string) error {
 		return err
 	}
 	o.platform = normalizedPlatform
-	if !filepath.IsAbs(o.cacheDir) || filepath.Clean(o.cacheDir) == "/" {
-		return errors.New("--cache-dir must be an absolute non-root directory")
+	if o.cacheDir == "" {
+		return errors.New("--cache-dir must be a non-root directory")
 	}
-	if o.firmware != "" && (!safePath(o.firmware) || strings.Contains(o.firmware, "/")) {
+	o.cacheDir, err = filepath.Abs(o.cacheDir)
+	if err != nil {
+		return fmt.Errorf("--cache-dir: %w", err)
+	}
+	if o.cacheDir == "/" {
+		return errors.New("--cache-dir must be a non-root directory")
+	}
+	if o.firmware != "" && (!asp.SafePath(o.firmware) || strings.Contains(o.firmware, "/")) {
 		return errors.New("unsafe --firmware")
 	}
 	if o.port < 1 || o.port > 65535 {
@@ -132,7 +140,7 @@ func runCLI(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("VERIFIED: %s (%s, Fire OS %s, %d files, %d bytes)\n", result.Path, result.Metadata.Firmware, fireOSForCache(result.Metadata), result.Metadata.Files, result.Metadata.Bytes)
+		fmt.Printf("VERIFIED: %s (%s, Fire OS %s, %d files, %d bytes)\n", result.Path, result.Metadata.Firmware, asp.FireOSForCache(result.Metadata), result.Metadata.Files, result.Metadata.Bytes)
 		return nil
 	case "create-bundle":
 		if o.release == "" || o.output == "" {
@@ -220,7 +228,7 @@ Usage:
 Commands: extract, list, verify, create-bundle, deploy-cache, deploy-asp, deploy-all
 
   extract        --ota FILE | --ota-url URL | --backup-dir DIR
-  list           [--platform CODENAME] [--cache-dir ABS_PATH]
+  list           [--platform CODENAME] [--cache-dir PATH]
   verify         [--firmware BUILD_OR_EXACT_DIRECTORY]
   create-bundle  [--firmware BUILD_OR_EXACT_DIRECTORY] --asp-release FILE --output BUNDLE.tar.gz
   deploy-cache   --host root@ECHO [--firmware VERSION]

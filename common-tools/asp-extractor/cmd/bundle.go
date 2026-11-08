@@ -2,125 +2,25 @@ package main
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/dmit2k/frankenasp-v3/internal/asp"
 )
 
-type releaseArchive struct {
-	Name, Version, Platform, CacheSchema string
-	Original                             []byte
-	Files                                map[string][]byte
-}
-
-var releaseNamePattern = regexp.MustCompile(`^frankenasp-v([0-9][A-Za-z0-9._-]*)-(athena|rook)-arm32\.tar\.gz$`)
+type releaseArchive = asp.VerifiedRelease
 
 func loadRelease(path, platform string) (releaseArchive, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return releaseArchive{}, err
-	}
-	if !info.Mode().IsRegular() || info.Size() > 64<<20 {
-		return releaseArchive{}, errors.New("release must be a regular .tar.gz <=64MiB")
-	}
-	basename := filepath.Base(path)
-	matched := releaseNamePattern.FindStringSubmatch(basename)
-	if len(matched) != 3 || (platform != "" && matched[2] != platform) {
-		return releaseArchive{}, errors.New("release filename does not match versioned target platform")
-	}
-	platform = matched[2]
-	original, err := os.ReadFile(path)
-	if err != nil {
-		return releaseArchive{}, err
-	}
-	z, err := gzip.NewReader(bytes.NewReader(original))
-	if err != nil {
-		return releaseArchive{}, fmt.Errorf("release gzip: %w", err)
-	}
-	defer z.Close()
-	r := tar.NewReader(z)
-	prefix := "frankenasp-" + platform + "/"
-	allowed := map[string]bool{"asp-installer": true, "LICENSE": true, "assets/manifest.json": true, "assets/asp1-child": true, "assets/external-asp": true}
-	if platform == "athena" {
-		allowed["assets/channel-map"] = true
-	}
-	files := map[string][]byte{}
-	total := int64(0)
-	for {
-		h, e := r.Next()
-		if e == io.EOF {
-			break
-		}
-		if e != nil {
-			return releaseArchive{}, e
-		}
-		if h.Typeflag == tar.TypeDir {
-			name := strings.TrimSuffix(h.Name, "/")
-			if name == "frankenasp-"+platform || name == "frankenasp-"+platform+"/assets" {
-				continue
-			}
-			return releaseArchive{}, fmt.Errorf("unexpected release directory %q", h.Name)
-		}
-		if h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeRegA {
-			return releaseArchive{}, fmt.Errorf("unsupported release entry %q", h.Name)
-		}
-		if !strings.HasPrefix(h.Name, prefix) {
-			return releaseArchive{}, fmt.Errorf("wrong release root %q", h.Name)
-		}
-		name := strings.TrimPrefix(h.Name, prefix)
-		if !allowed[name] || files[name] != nil {
-			return releaseArchive{}, fmt.Errorf("unexpected or repeated release entry %q", name)
-		}
-		if h.Size <= 0 || h.Size > 32<<20 {
-			return releaseArchive{}, fmt.Errorf("invalid release file size %q", name)
-		}
-		total += h.Size
-		if total > 64<<20 {
-			return releaseArchive{}, errors.New("oversized release contents")
-		}
-		blob, e := io.ReadAll(io.LimitReader(r, h.Size+1))
-		if e != nil || int64(len(blob)) != h.Size {
-			return releaseArchive{}, fmt.Errorf("truncated release member %s", name)
-		}
-		files[name] = blob
-	}
-	if len(files) != len(allowed) {
-		return releaseArchive{}, errors.New("release incomplete")
-	}
-	var manifest struct {
-		Schema      string `json:"schema"`
-		Platform    string `json:"platform"`
-		CacheSchema string `json:"cache_schema"`
-	}
-	if err = json.Unmarshal(files["assets/manifest.json"], &manifest); err != nil {
-		return releaseArchive{}, err
-	}
-	if manifest.Schema != "ASP1-ASSETS-V3" || manifest.Platform != platform {
-		return releaseArchive{}, errors.New("release platform or schema mismatch")
-	}
-	if _, err = elfNeeded(files["assets/asp1-child"], false, "/system/bin/linker"); err != nil {
-		return releaseArchive{}, fmt.Errorf("invalid helper ELF: %w", err)
-	}
-	if _, err = elfNeeded(files["assets/external-asp"], false, ""); err != nil {
-		return releaseArchive{}, fmt.Errorf("invalid launcher ELF: %w", err)
-	}
-	if platform == "athena" {
-		if err = validateChannelMap(files["assets/channel-map"]); err != nil {
-			return releaseArchive{}, err
-		}
-	}
-	return releaseArchive{Name: basename, Version: matched[1], Platform: platform, CacheSchema: manifest.CacheSchema, Original: original, Files: files}, nil
+	return asp.LoadRelease(path, platform)
 }
 
 type bundleManifest struct {
@@ -137,7 +37,7 @@ type bundleManifest struct {
 }
 
 func archiveMember(w *tar.Writer, name string, b []byte) error {
-	if !safePath(name) {
+	if !asp.SafePath(name) {
 		return fmt.Errorf("unsafe bundle entry %q", name)
 	}
 	h := &tar.Header{Name: name, Mode: 0600, Size: int64(len(b)), ModTime: time.Unix(0, 0).UTC(), Typeflag: tar.TypeReg}
@@ -152,22 +52,22 @@ func createBundle(o options) error {
 	if err != nil {
 		return err
 	}
-	if rel.CacheSchema != cacheSchema {
-		return fmt.Errorf("--asp-release archive supports cache schema %q; this extractor requires %s (rebuild the FrankenASP release with the updated asp-installer)", rel.CacheSchema, cacheSchema)
+	if rel.CacheSchema != asp.CacheSchema {
+		return fmt.Errorf("--asp-release archive supports cache schema %q; this extractor requires %s (rebuild the FrankenASP release with the updated asp-installer)", rel.CacheSchema, asp.CacheSchema)
 	}
 	cache, err := selectDesktopCache(o)
 	if err != nil {
 		return err
 	}
-	if err := validateHelperRuntime(rel.Platform, rel.Files["assets/asp1-child"], cache.Items); err != nil {
+	if err := asp.ValidateHelperRuntimeForPaths(rel.Files["assets/asp1-child"], cache.Items, rel.Runtime.LibrarySearch); err != nil {
 		return err
 	}
-	members, err := cacheFiles(cache)
+	members, err := asp.CacheFiles(cache)
 	if err != nil {
 		return err
 	}
 	digest := sha256.Sum256(rel.Original)
-	mf := bundleManifest{Schema: "FRANKENASP-EXTRACTOR-BUNDLE-V2", Platform: o.platform, Firmware: cache.Metadata.Firmware, FireOS: fireOSForCache(cache.Metadata), CacheDir: filepath.Base(cache.Path), CacheSourceSHA256: cache.Metadata.SourceSHA256, Release: rel.Name, ReleaseVersion: rel.Version, ReleaseSHA256: hex.EncodeToString(digest[:]), FilesSHA256: map[string]string{}}
+	mf := bundleManifest{Schema: "FRANKENASP-EXTRACTOR-BUNDLE-V2", Platform: o.platform, Firmware: cache.Metadata.Firmware, FireOS: asp.FireOSForCache(cache.Metadata), CacheDir: filepath.Base(cache.Path), CacheSourceSHA256: cache.Metadata.SourceSHA256, Release: rel.Name, ReleaseVersion: rel.Version, ReleaseSHA256: hex.EncodeToString(digest[:]), FilesSHA256: map[string]string{}}
 	prefix := "asp-installer-cache/" + filepath.Base(cache.Path) + "/"
 	archiveFiles := map[string][]byte{"release/" + rel.Name: rel.Original}
 	for name, data := range members {

@@ -12,7 +12,7 @@ Only this factory firmware version is supported. Other versions have not been ve
 
 ## Implementation status
 
-The Rook implementation is included in **FrankenASP 3.4**. It provides the platform-specific components needed to use External ASP V3 with TECHO5. Compatible factory firmware must be supplied separately by the device owner; it is not distributed with FrankenASP.
+The Rook implementation is included in **FrankenASP 3.6**. It provides the platform-specific components needed to use External ASP V3 with TECHO5. Compatible factory firmware must be supplied separately by the device owner; it is not distributed with FrankenASP.
 
 ## Testing status
 

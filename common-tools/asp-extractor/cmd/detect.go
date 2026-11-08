@@ -3,20 +3,21 @@ package main
 import (
 	"archive/zip"
 	"errors"
+	"github.com/dmit2k/frankenasp-v3/internal/asp"
 	"os"
 )
 
 func detectBackupPlatform(dir string) (string, error) {
-	src, handles, err := openBackupImages(dir)
+	src, handles, err := asp.OpenBackupImages(dir)
 	if err != nil {
 		return "", err
 	}
-	defer closeImages(handles)
-	prop, err := readSystemBuildProp(src)
+	defer asp.CloseImages(handles)
+	prop, err := asp.ReadSystemBuildProp(src)
 	if err != nil {
 		return "", err
 	}
-	return buildPropCodename(prop)
+	return asp.BuildPropCodename(prop)
 }
 
 func detectOTAPlatform(path string) (string, error) {
@@ -33,6 +34,13 @@ func detectOTAPlatform(path string) (string, error) {
 		return "", errors.New("OTA must be a regular file <=2GiB")
 	}
 	z, err := zip.NewReader(f, st.Size())
+	if errors.Is(err, zip.ErrFormat) {
+		// Standalone full CrAU payloads expose their identity in system/build.prop.
+		var magic [4]byte
+		if _, readErr := f.ReadAt(magic[:], 0); readErr == nil && string(magic[:]) == "CrAU" {
+			return "", nil
+		}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -43,11 +51,11 @@ func detectOTAPlatform(path string) (string, error) {
 		if file.Name != "META-INF/com/android/metadata" {
 			continue
 		}
-		raw, err := readZip(file, 65536)
+		raw, err := asp.ReadZip(file, 65536)
 		if err != nil {
 			return "", err
 		}
-		return sourceCodename(metadataValue(raw, "post-device"), metadataValue(raw, "post-build"))
+		return sourceCodename(asp.MetadataValue(raw, "post-device"), asp.MetadataValue(raw, "post-build"))
 	}
 	return "", nil
 }

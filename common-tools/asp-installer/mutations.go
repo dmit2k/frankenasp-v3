@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/dmit2k/frankenasp-v3/internal/asp"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,7 +44,7 @@ func uninstallAll(purgeBackups, restart bool, m *progressMeter) (map[string]any,
 			if e = unix.Renameat2(unix.AT_FDCWD, r, unix.AT_FDCWD, trash, unix.RENAME_NOREPLACE); e != nil {
 				return e
 			}
-			if e = fsyncDir(parentPath()); e != nil {
+			if e = asp.FsyncDir(parentPath()); e != nil {
 				return fmt.Errorf("runtime detached at %s: %w", trash, e)
 			}
 			// One more scan catches a helper which spawned between preflight and rename.
@@ -83,7 +84,7 @@ func uninstallAll(purgeBackups, restart bool, m *progressMeter) (map[string]any,
 			}
 			result["backups_kept"] = false
 		}
-		return fsyncDir(parentPath())
+		return asp.FsyncDir(parentPath())
 	})
 	if e != nil {
 		return result, e
@@ -122,7 +123,7 @@ func rollbackGeneration(generation string, restart bool, m *progressMeter) (map[
 		if e = unix.Renameat2(unix.AT_FDCWD, gen, unix.AT_FDCWD, destination, unix.RENAME_EXCHANGE); e != nil {
 			return e
 		}
-		if e = fsyncDir(parentPath()); e != nil {
+		if e = asp.FsyncDir(parentPath()); e != nil {
 			return e
 		}
 		newGen := filepath.Join(parentPath(), generationPrefix+generationID())
@@ -130,7 +131,7 @@ func rollbackGeneration(generation string, restart bool, m *progressMeter) (map[
 			return fmt.Errorf("rollback exchanged, replaced runtime left at %s: %w", gen, e)
 		}
 		result["saved_replaced_generation"] = filepath.Base(newGen)
-		return fsyncDir(parentPath())
+		return asp.FsyncDir(parentPath())
 	})
 	if e != nil {
 		return result, e

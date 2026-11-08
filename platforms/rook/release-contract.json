@@ -1,0 +1,25 @@
+{
+  "platform": "rook",
+  "display_name": "Echo Spot (1st Gen, 2017) [rook]",
+  "known_fireos": {
+    "690918120": "5.5.6.9"
+  },
+  "runtime": {
+    "vendor_modes": [
+      "bundled"
+    ],
+    "library_search": [
+      "system/lib",
+      "vendor/lib"
+    ]
+  },
+  "legacy_v3_files": [
+    "asp-installer",
+    "LICENSE",
+    "assets/manifest.json",
+    "assets/asp1-child",
+    "assets/external-asp"
+  ],
+  "required_data": [],
+  "legacy_v3_validate_channel_map": false
+}

@@ -33,7 +33,7 @@ func TestFirmwareWithoutOTAAutoAndExplicit(t *testing.T) {
 	base, found := fixtureCache(t)
 	for _, firmware := range []string{"", "PS75741-7080"} {
 		var out bytes.Buffer
-		meter := &progressMeter{out: &out, done: make(chan struct{})}
+		meter := &progressMeter{Out: &out, Done: make(chan struct{})}
 		selected, path, cleanup, e := loadExtracted(context.Background(), base, "athena", "", "", firmware, t.TempDir(), "inspect", false, false, false, meter)
 		meter.Close()
 		if e != nil || selected.Path != found.Path || path != "" || cleanup != nil {
@@ -49,7 +49,7 @@ func TestCachedFirmwareRequiresNoOTAArchiveInEveryMode(t *testing.T) {
 	for _, mode := range []string{"inspect", "install", "update", "check", "check-vendor"} {
 		t.Run(mode, func(t *testing.T) {
 			var output bytes.Buffer
-			meter := &progressMeter{out: &output, done: make(chan struct{})}
+			meter := &progressMeter{Out: &output, Done: make(chan struct{})}
 			selected, otaPath, cleanup, err := loadExtracted(context.Background(), base, "athena", "", "", saved.Metadata.Firmware, t.TempDir(), mode, false, false, false, meter)
 			meter.Close()
 			if err != nil || selected.Path != saved.Path || otaPath != "" || cleanup != nil {
@@ -102,7 +102,7 @@ func TestLocalOTAIsNeverCopiedIntoCache(t *testing.T) {
 		t.Fatalf("local OTA created an archive directory: %v", e)
 	}
 	var output bytes.Buffer
-	meter := &progressMeter{out: &output, done: make(chan struct{})}
+	meter := &progressMeter{Out: &output, Done: make(chan struct{})}
 	got, _, _, err := loadExtracted(context.Background(), base, "athena", source, "", "", t.TempDir(), "inspect", false, false, false, meter)
 	meter.Close()
 	if err != nil || got.Path != found.Path {

@@ -1,0 +1,36 @@
+{
+  "platform": "athena",
+  "display_name": "Echo Show 8 (2nd Gen, 2021) [athena]",
+  "known_fireos": {
+    "PS75741-7080": "7574.1",
+    "PS75741-7081": "7574.1",
+    "PS75741-7082": "7574.1"
+  },
+  "runtime": {
+    "vendor_modes": [
+      "bundled",
+      "live"
+    ],
+    "library_search": [
+      "vendor/lib",
+      "system/lib/vndk-28",
+      "system/lib/vndk-sp-28",
+      "system/lib"
+    ]
+  },
+  "legacy_v3_files": [
+    "asp-installer",
+    "LICENSE",
+    "assets/manifest.json",
+    "assets/asp1-child",
+    "assets/external-asp",
+    "assets/channel-map"
+  ],
+  "required_data": [
+    {
+      "path": "assets/channel-map",
+      "install_to": "lib/rootfs/factory/channel-map"
+    }
+  ],
+  "legacy_v3_validate_channel_map": true
+}

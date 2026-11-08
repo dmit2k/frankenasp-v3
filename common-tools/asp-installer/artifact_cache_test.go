@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -93,33 +94,54 @@ func TestCacheDetectsModifiedMissingAndExtraFiles(t *testing.T) {
 		})
 	}
 }
-func TestCacheRefreshAtomicExchange(t *testing.T) {
+func TestCacheRefreshPreservesDistinctInventoryVariant(t *testing.T) {
 	base, saved := fixtureCache(t)
-	newItems := map[string][]byte{"system/bin/linker": []byte("new-version"), "vendor/lib/libasp.so": []byte("new-asp")}
-	result, e := publishCache(base, saved.Metadata, newItems, true, nil)
-	if e != nil {
-		t.Fatal(e)
+	original, err := readCache(saved.Path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if result.Path != saved.Path || result.Hit {
-		t.Fatal("refresh did not replace same identity")
+	newItems := map[string][]byte{"system/bin/linker": []byte("new-version"), "vendor/lib/libasp.so": []byte("new-asp"), "vendor/etc/audio-algorithms/nested/coefs.cfg": []byte("new recursive resource")}
+	result, err := publishCache(base, saved.Metadata, newItems, true, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if string(result.Items["system/bin/linker"]) != "new-version" {
-		t.Fatal("old cache survived refresh")
+	if result.Path == saved.Path || result.Hit || !strings.HasSuffix(result.Path, "-variant-2") {
+		t.Fatalf("distinct inventory must receive variant, got %+v", result)
 	}
-	entries, e := os.ReadDir(base)
-	if e != nil {
-		t.Fatal(e)
+	if string(result.Items["vendor/etc/audio-algorithms/nested/coefs.cfg"]) != "new recursive resource" {
+		t.Fatal("recursive inventory missing from variant")
 	}
-	for _, v := range entries {
-		if strings.HasPrefix(v.Name(), ".cache-building-") {
-			t.Fatal("old cache stage remained")
+	retained, err := readCache(saved.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(retained.Items, original.Items) {
+		t.Fatal("earlier valid cache was replaced")
+	}
+	if result.Metadata.SourceSHA256 != retained.Metadata.SourceSHA256 {
+		t.Fatal("source identity was changed by collector expansion")
+	}
+	if _, err = findCache(base, "", retained.Metadata.SourceSHA256, ""); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("same-source inventory variants not reported ambiguous: %v", err)
+	}
+	repeat, err := publishCache(base, saved.Metadata, newItems, false, nil)
+	if err != nil || !repeat.Hit || repeat.Path != result.Path {
+		t.Fatalf("inventory dedup failed: %+v %v", repeat, err)
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".cache-building-") {
+			t.Fatal("orphan cache staging directory")
 		}
 	}
 }
 func TestCachedSourceSkipsExtractionAndDownload(t *testing.T) {
 	base, saved := fixtureCache(t)
 	var output bytes.Buffer
-	meter := &progressMeter{out: &output, done: make(chan struct{})}
+	meter := &progressMeter{Out: &output, Done: make(chan struct{})}
 	result, downloaded, cleanup, e := loadExtracted(context.Background(), base, "athena", "", "https://example.invalid/ota.bin", "", t.TempDir(), "check-vendor", false, false, false, meter)
 	meter.Close()
 	if e != nil || !result.Hit || downloaded != "" || cleanup != nil {
@@ -226,7 +248,7 @@ func TestDifferentSourcesWithIdenticalFactoryFilesDeduplicate(t *testing.T) {
 	meta.OTAFormat = "BACKUP_RAW_EXT4"
 	meta.DependencyEdges = 5
 	var out bytes.Buffer
-	meter := &progressMeter{out: &out, done: make(chan struct{})}
+	meter := &progressMeter{Out: &out, Done: make(chan struct{})}
 	duplicate, err := publishCache(base, meta, first.Items, false, meter)
 	meter.Close()
 	if err != nil {

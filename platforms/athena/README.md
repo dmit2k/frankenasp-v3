@@ -6,22 +6,33 @@ FrankenASP V3 implementation for **Echo Show 8 (2nd generation)** (`athena`).
 
 | Fire OS | Amazon build |
 | --- | --- |
-| **7574.1** | **PS75741/7080** |
-| **7574.1** | **PS75741/7081** |
-| **7574.1** | **PS75741/7082** |
+| **7574.1** | **PS75741-7080** |
+| **7574.1** | **PS75741-7081** |
+| **7574.1** | **PS75741-7082** |
 
-These factory firmware versions have been verified for this implementation. Other versions have not been verified.
+The build IDs below use the exact normalized form accepted by the `--firmware` CLI (Amazon build labels may use `/` instead of `-`).
+
+These are the currently documented firmware builds for the Athena native TECHO5 External ASP helper. Only **PS75741-7080** has been tested with live audio on a physical device; the remaining listed builds have been verified against extracted factory files.
+
+### Additional factory-library validation (not a hardware support claim)
+
+| Fire OS | Amazon build | Evidence |
+| --- | --- | --- |
+| 7575.1 | PS75751-7806 | Verified Cache V2 inventory; matching extracted ASP ELF/library fingerprint |
+| 7575.1 | PS75751-7809 | Verified Cache V2 inventory; matching extracted ASP ELF/library fingerprint |
+
+These additional factory caches have identical selected ASP libraries to the 7574.1 builds, but their firmware metadata and other resources differ. They are **not** yet listed as hardware-validated native helper firmware. Matching library fingerprints alone do not prove runtime compatibility. Other firmware builds have not been verified.
 
 ## Implementation status
 
-The Athena implementation is included in **FrankenASP 3.4**. It provides the platform-specific components needed to use External ASP V3 with TECHO5. Compatible factory firmware must be supplied separately by the device owner; it is not distributed with FrankenASP.
+The Athena implementation is included in **FrankenASP 3.6**. It provides the platform-specific components needed to use External ASP V3 with TECHO5. Compatible factory firmware must be supplied separately by the device owner; it is not distributed with FrankenASP.
 
 ## Testing status
 
 - Host tests, ASAN and UBSAN: **passed**.
-- Physical Echo Show 8: startup and live audio processing **verified** with **PS75741/7080**.
+- Physical Echo Show 8: startup and live audio processing **verified** with **PS75741-7080**.
 - Controlled acoustic comparison: **completed** on the tested device; see the [acoustic comparison report](../../docs/athena-acoustic-comparison-20261025.md).
-- Builds **PS75741/7081** and **PS75741/7082**: verified from factory firmware files but not separately tested on physical devices.
+- Builds **PS75741-7081** and **PS75741-7082**: verified from factory firmware files but not separately tested on physical devices.
 
 ## Building and tests
 

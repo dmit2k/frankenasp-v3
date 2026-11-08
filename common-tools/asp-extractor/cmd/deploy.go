@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dmit2k/frankenasp-v3/internal/asp"
+
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
@@ -200,7 +202,7 @@ func transferTree(r *remote, stage string, files map[string][]byte, modeFn func(
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if !safePath(name) {
+		if !asp.SafePath(name) {
 			return fmt.Errorf("unsafe transfer member %q", name)
 		}
 		if err := r.put(stage+"/"+name, files[name], modeFn(name)); err != nil {
@@ -241,19 +243,19 @@ func (r *remote) getSmallFile(file string, maxBytes int64) ([]byte, error) {
 	}
 	return raw, nil
 }
-func compatibleCacheMetadata(a, b cacheMetadata) bool {
+func compatibleCacheMetadata(a, b asp.CacheMetadata) bool {
 	// Archive retrieval path, URL and creation timestamp are not factory content.
 	return a.Schema == b.Schema && a.Platform == b.Platform && a.Firmware == b.Firmware &&
 		a.FireOS == b.FireOS && a.SourceSHA256 == b.SourceSHA256 &&
 		a.OTAFormat == b.OTAFormat && a.Files == b.Files && a.Bytes == b.Bytes && a.DependencyEdges == b.DependencyEdges
 }
 func deployCache(r *remote, cache cacheResult) error {
-	files, err := cacheFiles(cache)
+	files, err := asp.CacheFiles(cache)
 	if err != nil {
 		return err
 	}
 	basename := filepath.Base(cache.Path)
-	if !safePath(basename) || strings.Contains(basename, "/") {
+	if !asp.SafePath(basename) || strings.Contains(basename, "/") {
 		return errors.New("invalid destination cache name")
 	}
 	dest := echoCache + "/" + basename
@@ -268,7 +270,7 @@ func deployCache(r *remote, cache cacheResult) error {
 		if er != nil {
 			return fmt.Errorf("existing remote cache preserved: %w", er)
 		}
-		var remoteMeta cacheMetadata
+		var remoteMeta asp.CacheMetadata
 		if er = json.Unmarshal(raw, &remoteMeta); er != nil {
 			return fmt.Errorf("remote manifest invalid: %w", er)
 		}
@@ -360,11 +362,11 @@ func deploy(o options) error {
 			return err
 		}
 	}
-	if o.command != "deploy-cache" && rel.CacheSchema != cacheSchema {
-		return fmt.Errorf("--asp-release archive does not declare %s; use a release built with the new helper-independent installer", cacheSchema)
+	if o.command != "deploy-cache" && rel.CacheSchema != asp.CacheSchema {
+		return fmt.Errorf("--asp-release archive does not declare %s; use a release built with the new helper-independent installer", asp.CacheSchema)
 	}
 	if o.command == "deploy-all" {
-		if err := validateHelperRuntime(rel.Platform, rel.Files["assets/asp1-child"], cache.Items); err != nil {
+		if err := asp.ValidateHelperRuntimeForPaths(rel.Files["assets/asp1-child"], cache.Items, rel.Runtime.LibrarySearch); err != nil {
 			return err
 		}
 	}

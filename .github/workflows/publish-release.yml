@@ -10,24 +10,30 @@ permissions:
 
 jobs:
   publish:
-    name: Verify staged binaries and publish GitHub Release
+    name: Verify staged archives before GitHub Release
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout exact release tag
+      - name: Checkout exact source tag
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Checkout separately staged, independently built release archives
+      - name: Checkout independently staged release archives
         uses: actions/checkout@v4
         with:
           ref: release-assets/${{ github.ref_name }}
           path: release-assets
           persist-credentials: false
 
-      - name: Verify tag, source commit, and archive checksums
+      - name: Configure reproducible Go validator
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.27.3"
+          cache: true
+
+      - name: Verify tag, source commit, and exact release inventory
         shell: bash
         env:
           TAG: ${{ github.ref_name }}
@@ -36,20 +42,12 @@ jobs:
           test "$TAG" = "v$(cat VERSION)"
           test "$(cat release-assets/COMMIT)" = "$GITHUB_SHA"
           test "$(cat release-assets/TAG)" = "$TAG"
-          cd release-assets
-          sha256sum --check --strict SHA256SUMS
-          for platform in athena rook; do
-            archive="frankenasp-${TAG}-${platform}-arm32.tar.gz"
-            test -s "$archive"
-            tar -tzf "$archive" | grep -Fx "frankenasp-${platform}/asp-installer"
-            tar -xOzf "$archive" "frankenasp-${platform}/assets/manifest.json" | \
-              python3 -c 'import json,sys; j=json.load(sys.stdin); assert j["schema"]=="ASP1-ASSETS-V3" and j["platform"]==sys.argv[1] and j["cache_schema"]=="ASP1-EXTRACTED-CACHE-V2"' "$platform"
-          done
-          extractor="asp-extractor-${TAG}-linux-amd64.tar.gz"
-          test -s "$extractor"
-          tar -tzf "$extractor" | grep -Fx "asp-extractor-${TAG}-linux-amd64/asp-extractor"
-          tar -tzf "$extractor" | grep -Fx "asp-extractor-${TAG}-linux-amd64/ASP-EXTRACTOR.md"
-          test "$(wc -l < SHA256SUMS)" -eq 3
+          GOTOOLCHAIN=local GOFLAGS=-p=2 GOMAXPROCS=2 \
+            go build -trimpath -o "$RUNNER_TEMP/asp-release-verify" ./common-tools/asp-release/cmd
+          python3 scripts/verify-release-inventory.py \
+            --dir release-assets --tag "$TAG" \
+            --validator "$RUNNER_TEMP/asp-release-verify" \
+            --output "$RUNNER_TEMP/verified-release-assets.txt"
 
       - name: Publish GitHub Release with validated artifacts
         env:
@@ -59,15 +57,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="${TAG#v}"
           notes_file="docs/releases/${TAG}.md"
           test -s "$notes_file" || { echo "Missing release notes: $notes_file" >&2; exit 1; }
-          gh release create "$TAG" \
-            "release-assets/frankenasp-${TAG}-athena-arm32.tar.gz" \
-            "release-assets/frankenasp-${TAG}-rook-arm32.tar.gz" \
-            "release-assets/asp-extractor-${TAG}-linux-amd64.tar.gz" \
-            "release-assets/SHA256SUMS" \
+          mapfile -t assets < "$RUNNER_TEMP/verified-release-assets.txt"
+          test "${#assets[@]}" -ge 2
+          for entry in "${assets[@]}"; do
+            test -s "$entry"
+          done
+          gh release create "$TAG" "${assets[@]}" release-assets/SHA256SUMS \
             --verify-tag \
             --latest \
-            --title "FrankenASP ${version}" \
+            --title "FrankenASP ${TAG#v}" \
             --notes-file "$notes_file"

@@ -15,7 +15,7 @@ The difference was striking. [Read about the testing process and results](docs/a
 - `platforms/athena/` — Echo Show 8 (2nd generation): ARM32 Linux launcher and ARM32/Bionic factory ASP helper, build scripts, offline tests and fixtures. **Tested on a physical Echo Show 8 (2nd gen).**
 - `platforms/rook/` — Echo Spot (1st generation, 2017): ARM32 Linux launcher and ARM32/Bionic factory ASP helper, native tests and offline build scripts. **Tested on a physical Echo Spot (1st gen).**
 
-Both implementations have been deployed and exercised with TECHO5 and the original factory DSP on real devices; validation is not limited to emulation or offline tests. These are the only Echo models currently available to the maintainer. Other models have **not** been adapted or tested because the maintainer does not have access to their hardware; support for other models must not be assumed. Adding a model requires device-specific adaptation and on-device verification. Have an unused Echo collecting dust? You're always welcome to donate it to the maintainer for testing and experiments. :)
+Both implementations have been deployed and exercised with TECHO5 and the original factory DSP on real devices; validation is not limited to emulation or offline tests. See the platform guides for the firmware builds currently documented for [Athena](platforms/athena/README.md#supported-firmware) and [Rook](platforms/rook/README.md#supported-firmware). These are the only Echo models currently available to the maintainer. Other models have **not** been adapted or tested because the maintainer does not have access to their hardware; support for other models must not be assumed. Adding a model requires device-specific adaptation and on-device verification. Have an unused Echo collecting dust? You're always welcome to donate it to the maintainer for testing and experiments. :)
 
 ## Acoustic comparison
 
@@ -34,11 +34,13 @@ Production ARM32 launcher and Bionic child are built separately using `platforms
 
 **Vendor library files, firmware, calibration data and private runtime images are not distributed with this repository.**
 
+The desktop extractor and device installer share a platform-independent Go core in `internal/asp`; platform-specific native launchers and helpers remain under `platforms/`. Common tooling supports other Echo codenames and compatible factory firmware, while TECHO5 External ASP native helpers are currently implemented and hardware-tested only for Athena and Rook.
+
 Maintainer release procedures are documented in [RELEASING.md](docs/RELEASING.md).
 
 ## Install FrankenASP V3
 
-**Version 3.4 is the current recommended and supported stable release.** Download the separate Athena, Rook or Linux x86_64 packages from [GitHub Releases](https://github.com/dmit2k/frankenasp-v3/releases).
+**Version 3.6 is the current recommended stable release.** Download the separate Athena, Rook or Linux x86_64 packages from [GitHub Releases](https://github.com/dmit2k/frankenasp-v3/releases).
 
 There are **two ways to prepare and install FrankenASP V3**:
 

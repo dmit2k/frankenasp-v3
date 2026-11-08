@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/dmit2k/frankenasp-v3/internal/asp"
 )
 
 // The build script supplies the tagged release version or a timestamped build.
@@ -67,10 +69,20 @@ func run() error {
 		if e := sf.Parse(os.Args[2:]); e != nil {
 			return e
 		}
-		if sf.NArg() != 0 || !filepath.IsAbs(*cacheRoot) || *cacheRoot == "/" {
-			return errors.New("status accepts only --cache-dir ABSOLUTE_PATH")
+		if sf.NArg() != 0 {
+			return errors.New("status accepts no positional arguments")
 		}
-		result := statusData(*cacheRoot)
+		if *cacheRoot == "" {
+			return errors.New("--cache-dir must be a non-root directory")
+		}
+		absRoot, err := filepath.Abs(*cacheRoot)
+		if err != nil {
+			return fmt.Errorf("--cache-dir: %w", err)
+		}
+		if absRoot == "/" {
+			return errors.New("unsafe cache directory")
+		}
+		result := statusData(absRoot)
 		return outputResult(os.Stdout, jsonOutput || *jsonFlag, result, func() { printStatus(os.Stdout, result) })
 	}
 	switch cmd {
@@ -89,7 +101,7 @@ func run() error {
 	legacyTmpDir := f.String("tmp-dir", "", "deprecated alias for --ota-search-dir; NOT used for OTA downloads")
 	cachePath := f.String("cache-dir", cacheDefaultPath(), "persistent SHA-256 verified extracted OTA cache directory")
 	refreshCache := f.Bool("refresh-cache", false, "redownload and re-extract selected OTA, atomically replacing an existing cache")
-	vendorMode := f.String("vendor-mode", "auto", "auto|bundled|live; Rook always bundled")
+	vendorMode := f.String("vendor-mode", "auto", "auto|bundled|live; live requires explicit release capability")
 	forceNoBackup := f.Bool("force-no-backup", false, "update only: skip archive backup (previous generation still retained)")
 	restart := f.Bool("restart-techo5", false, "mutations only: allow verified PID1-supervised Linux TECHO5 daemon restart if required")
 	purge := f.Bool("purge-backups", false, "uninstall only: also remove installer-created backups")
@@ -106,11 +118,25 @@ func run() error {
 	if *removeOTA && *otaURL == "" {
 		return errors.New("--delete-downloaded-ota requires --ota-url")
 	}
-	if *cachePath == "" || !filepath.IsAbs(*cachePath) {
-		return errors.New("--cache-dir must be absolute")
+	if *cachePath == "" {
+		return errors.New("--cache-dir must be a non-root directory")
 	}
-	if *cachePath == "/" {
+	absCache, err := filepath.Abs(*cachePath)
+	if err != nil {
+		return fmt.Errorf("--cache-dir: %w", err)
+	}
+	if absCache == "/" {
 		return errors.New("unsafe cache directory")
+	}
+	*cachePath = absCache
+	for _, dir := range []*string{otaSearchDir, legacyTmpDir} {
+		if *dir != "" {
+			absolute, err := filepath.Abs(*dir)
+			if err != nil {
+				return fmt.Errorf("OTA search directory: %w", err)
+			}
+			*dir = absolute
+		}
 	}
 	searchDirectory, e := resolveOTASearchDir(*cachePath, *otaSearchDir, *legacyTmpDir)
 	if e != nil {
@@ -167,69 +193,31 @@ func run() error {
 	if *refreshCache && *ota == "" && *otaURL == "" {
 		return errors.New("--refresh-cache requires --ota or --ota-url")
 	}
-	if *firmware != "" && (!safePath(*firmware) || strings.Contains(*firmware, "/")) {
+	if *firmware != "" && (!asp.SafePath(*firmware) || strings.Contains(*firmware, "/")) {
 		return errors.New("unsafe --firmware version or cache name")
 	}
+	var assetPlan asp.AssetPlan
 	if cmd != "inspect" {
-		// Only helper-bearing operations require a supported release manifest.
-		// Factory inspection must work even when no release exists for a model.
-		manifestRaw, err := os.ReadFile(filepath.Join(*assets, "manifest.json"))
+		assetsAbs, er := filepath.Abs(*assets)
+		if er != nil {
+			return er
+		}
+		assetPlan, err = asp.LoadAssets(assetsAbs)
 		if err != nil {
-			return fmt.Errorf("release manifest unavailable: %w", err)
-		}
-		var manifest struct {
-			Schema      string `json:"schema"`
-			Platform    string `json:"platform"`
-			CacheSchema string `json:"cache_schema"`
-		}
-		if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
 			return err
 		}
-		if manifest.Schema != "ASP1-ASSETS-V3" || manifest.CacheSchema != cacheSchema ||
-			(manifest.Platform != "athena" && manifest.Platform != "rook") {
-			return errors.New("invalid release manifest")
-		}
 		if *platform == "" {
-			*platform = manifest.Platform
-		} else if *platform != manifest.Platform {
+			*platform = assetPlan.Platform
+		} else if *platform != assetPlan.Platform {
 			return errors.New("release platform mismatch")
 		}
 	}
 	if *vendorMode != "auto" && *vendorMode != "bundled" && *vendorMode != "live" {
 		return errors.New("--vendor-mode must be auto|bundled|live")
 	}
-	if *platform == "rook" && *vendorMode == "live" {
-		return errors.New("rook requires bundled vendor; check-vendor is Athena-only")
-	}
-	if cmd == "check-vendor" && *platform != "athena" {
-		return errors.New("check-vendor is supported only on Athena")
-	}
-	// Inspection extracts only factory artifacts; no helper/launcher is needed.
 	var child []byte
 	if cmd != "inspect" {
-		child, e = os.ReadFile(filepath.Join(*assets, "asp1-child"))
-		if e != nil {
-			return e
-		}
-		if _, e = elfNeeded(child, false, "/system/bin/linker"); e != nil {
-			return fmt.Errorf("invalid bundled helper ELF: %w", e)
-		}
-		launcher, e := os.ReadFile(filepath.Join(*assets, "external-asp"))
-		if e != nil {
-			return e
-		}
-		if _, e = elfNeeded(launcher, false, ""); e != nil {
-			return fmt.Errorf("invalid bundled launcher ELF: %w", e)
-		}
-		if *platform == "athena" {
-			mapData, err := os.ReadFile(filepath.Join(*assets, "channel-map"))
-			if err != nil {
-				return err
-			}
-			if err = validateChannelMap(mapData); err != nil {
-				return err
-			}
-		}
+		child = assetPlan.Files["assets/asp1-child"]
 	}
 	if mutating && os.Geteuid() != 0 {
 		return errors.New("install/update require root")
@@ -267,11 +255,11 @@ func run() error {
 	}
 	collectedItems := extraction.Items
 	if cmd != "inspect" {
-		if e := validateHelperRuntime(*platform, child, collectedItems); e != nil {
+		if e := asp.ValidateHelperRuntimeForPaths(child, collectedItems, assetPlan.Runtime.LibrarySearch); e != nil {
 			return e
 		}
 	}
-	summary := map[string]any{"platform": extraction.Metadata.Platform, "ota_format": extraction.Metadata.OTAFormat, "factory_files": extraction.Metadata.Files, "factory_bytes": extraction.Metadata.Bytes, "dependency_edges": extraction.Metadata.DependencyEdges, "firmware": extraction.Metadata.Firmware, "fire_os_version": fireOSForCache(extraction.Metadata), "platform_label": displayPlatform(extraction.Metadata.Platform), "cache": map[string]any{"hit": extraction.Hit, "path": extraction.Path, "source_sha256": extraction.Metadata.SourceSHA256}}
+	summary := map[string]any{"platform": extraction.Metadata.Platform, "ota_format": extraction.Metadata.OTAFormat, "factory_files": extraction.Metadata.Files, "factory_bytes": extraction.Metadata.Bytes, "dependency_edges": extraction.Metadata.DependencyEdges, "firmware": extraction.Metadata.Firmware, "fire_os_version": asp.FireOSForCache(extraction.Metadata), "platform_label": displayPlatform(extraction.Metadata.Platform), "cache": map[string]any{"hit": extraction.Hit, "path": extraction.Path, "source_sha256": extraction.Metadata.SourceSHA256}}
 	if *otaURL != "" && downloadedOTA != "" {
 		summary["downloaded_ota"] = map[string]any{"path": downloadedOTA, "retained": !*removeOTA}
 	}
@@ -287,9 +275,10 @@ func run() error {
 			diff.Warning = err.Error()
 		}
 		summary["vendor"] = diff
-		summary["live_vendor_usable"] = diff.Matching && diff.Compared > 0
+		summary["live_vendor_usable"] = diff.Matching && diff.Compared > 0 && assetPlan.AllowsVendor("live")
+		summary["live_capability"] = assetPlan.AllowsVendor("live")
 		if diff.Matching {
-			summary["recommendation"] = "live vendor may be used on Athena"
+			summary["recommendation"] = "live vendor usable only when declared by the native launcher"
 		} else {
 			summary["recommendation"] = "use matched bundled vendor rootfs"
 		}
@@ -301,12 +290,12 @@ func run() error {
 		}
 		return nil
 	}
-	mode, inspection, e := chooseVendorMode(*platform, *vendorMode, collectedItems)
+	mode, inspection, e := chooseVendorModeCapabilities(assetPlan.Runtime, *vendorMode, collectedItems)
 	if e != nil {
 		return e
 	}
 	summary["vendor_mode"] = mode
-	if *platform == "athena" && *vendorMode == "auto" {
+	if assetPlan.AllowsVendor("live") && *vendorMode == "auto" {
 		summary["vendor_inspection"] = inspection
 	}
 	if cmd == "check" {
@@ -318,14 +307,18 @@ func run() error {
 				mode = m
 			}
 		}
-		diff, e := compareInstalled(*platform, *assets, collectedItems, mode, destination)
+		miccal, er := discoverMiccal()
+		if er != nil {
+			return er
+		}
+		diff, e := compareInstalledWithPlan(assetPlan, collectedItems, mode, destination, miccal)
 		if e != nil {
 			return e
 		}
 		summary["installed"] = installedVersion()
 		summary["comparison"] = diff
 		summary["update_required"] = !diff.Matching
-		if mode == "live" && *platform == "athena" {
+		if mode == "live" {
 			vendorDiff := compareVendor(collectedItems, "/vendor")
 			if err := vendorReadOnly(); err != nil {
 				vendorDiff.Matching = false
@@ -348,7 +341,7 @@ func run() error {
 		return e
 	}
 	if cmd == "install" || cmd == "update" {
-		result, err := installOrUpdate(*platform, *assets, collectedItems, extraction.Metadata.OTAFormat, mode, cmd == "update", *forceNoBackup, *restart, meter)
+		result, err := installOrUpdatePlan(assetPlan, collectedItems, extraction.Metadata.OTAFormat, mode, cmd == "update", *forceNoBackup, *restart, meter)
 		if err != nil {
 			return err
 		}

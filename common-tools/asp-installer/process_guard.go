@@ -121,7 +121,10 @@ func activeRoots() ([]string, error) {
 	}
 	return roots, nil
 }
-func scanActivity(roots []string) (activity, error) {
+
+var scanActivity = scanNativeActivity
+
+func scanNativeActivity(roots []string) (activity, error) {
 	report := activity{helpers: []processProof{}, blockers: []string{}}
 	trusted := map[fileID]string{}
 	for _, root := range roots {

@@ -1,9 +1,8 @@
 package main
 
 import (
+	"github.com/dmit2k/frankenasp-v3/internal/asp"
 	"math"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -32,26 +31,34 @@ func TestSpaceBudgetOverflow(t *testing.T) {
 	}
 }
 func TestActualRootfsBudget(t *testing.T) {
-	assets := t.TempDir()
-	for name, data := range map[string][]byte{"asp1-child": []byte("h"), "external-asp": []byte("l"), "manifest.json": []byte("{}"), "channel-map": []byte("cfg")} {
-		if e := os.WriteFile(filepath.Join(assets, name), data, 0600); e != nil {
-			t.Fatal(e)
-		}
-	}
 	items := map[string][]byte{"system/bin/linker": make([]byte, 5000), "vendor/lib/libasp.so": make([]byte, 6000)}
-	full, e := predictedRootfsBytes(items, assets, "athena", "bundled", 4096)
+	plan := asp.AssetPlan{Platform: "athena", Files: map[string][]byte{
+		"assets/external-asp": []byte("l"),
+		"assets/asp1-child":   []byte("h"),
+		"assets/channel-map":  []byte("cfg"),
+	}, Installed: []asp.ReleaseFile{
+		{Path: "assets/external-asp", Role: "launcher", InstallTo: "bin/external-asp"},
+		{Path: "assets/asp1-child", Role: "child", InstallTo: "lib/rootfs/factory/asp1-child"},
+		{Path: "assets/channel-map", Role: "data", InstallTo: "lib/rootfs/factory/channel-map"},
+	}}
+	full, e := predictedRootfsBytesPlan(items, plan, "bundled", 4096)
 	if e != nil {
 		t.Fatal(e)
 	}
-	live, e := predictedRootfsBytes(items, assets, "athena", "live", 4096)
+	live, e := predictedRootfsBytesPlan(items, plan, "live", 4096)
 	if e != nil {
 		t.Fatal(e)
 	}
 	if full-live != 12288 {
 		t.Fatalf("live vendor was not subtracted: full=%d live=%d", full, live)
 	}
-	if _, e := predictedRootfsBytes(items, assets, "athena", "bundled", 0); e == nil {
-		t.Fatal("invalid zero filesystem block accepted")
+	if _, e = predictedRootfsBytesPlan(items, plan, "bundled", 0); e == nil {
+		t.Fatal("zero block accepted")
+	}
+	// The planned inventory, not external asset metadata, is authoritative.
+	plan.Installed = append(plan.Installed, asp.ReleaseFile{Path: "assets/missing", Role: "data", InstallTo: "lib/rootfs/factory/missing"})
+	if _, e = predictedRootfsBytesPlan(items, plan, "bundled", 4096); e == nil {
+		t.Fatal("incomplete verified plan accepted")
 	}
 }
 func TestLiveAndBundledSpaceRequirements(t *testing.T) {

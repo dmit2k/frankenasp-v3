@@ -75,7 +75,9 @@ for periods in (0, 1, 2, 3, 311):
     expected = ([0]*64 + [(i % 30001)-15000 for i in range((periods*320)//128*128)])[:periods*320]
     require(list(actual) == expected, 'single initial pad and exact sample order')
     require('mock vendor stdout chatter' in err, 'vendor stdout isolated')
-    require(f'process={(periods*320)//128} destroy=1 deinit=1' in err, 'quantum count and cleanup')
+    quanta = (periods*320)//128
+    require(f'process={quanta} destroy=1 deinit=1 ref_open=1 ref_supply={quanta} ref_close=1' in err,
+            'one reference per native quantum, then cleanup')
 for mutation in ('swap', 'duplicate', 'lost'):
     b = bytearray(block(0))
     if mutation == 'swap':
@@ -103,13 +105,20 @@ rc, out, _ = case(good, [block(0)[:111]])
 require(rc != 0 and out == b'\xa5', 'truncated period')
 rc, out, _ = case(good, resource=False)
 require(rc != 0 and not out, 'unavailable resource before READY')
-for fault in ('load', 'init', 'create', 'process', 'counts', 'input-count',
-              'overrun', 'far-overrun', 'mutate', 'input-overrun', 'destroy'):
-    before_ready = fault in ('load', 'init', 'create')
+for fault in ('load', 'init', 'create', 'ref-open', 'ref-supply', 'ref-overrun',
+              'ref-close', 'process', 'counts', 'input-count', 'overrun',
+              'far-overrun', 'mutate', 'input-overrun', 'destroy'):
+    before_ready = fault in ('load', 'init', 'create', 'ref-open')
     rc, out, err = case(good, [] if before_ready else [block(0)], fault=fault)
     require(rc != 0 and bool(out[:1] == b'\xa5') != before_ready, 'fault result '+fault)
     if not before_ready:
-        require('destroy=1 deinit=1' in err, 'failure cleanup '+fault)
+        require('destroy=1 deinit=1' in err and 'ref_close=1' in err, 'failure cleanup '+fault)
+    if fault == 'ref-open':
+        require('process=0 destroy=1 deinit=1 ref_open=1 ref_supply=0 ref_close=0' in err,
+                'rejected registration closes ASR only')
+    if fault in ('ref-supply', 'ref-overrun'):
+        require(out == b'\xa5' and 'process=0' in err and 'ref_supply=1' in err,
+                'reference failure stops before ASR')
     if fault == 'create':
         require('destroy=0 deinit=1' in err, 'failed create cleanup')
 # Zero MIC periods remain ordinary PCM; nonzero REF is retained without a reset.

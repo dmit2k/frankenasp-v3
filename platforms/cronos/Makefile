@@ -1,6 +1,6 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror
-RUNTIME = src/descriptor.c src/io.c src/runtime.c src/factory_adapter.c src/child.c
+RUNTIME = src/descriptor.c src/io.c src/runtime.c src/factory_adapter.c src/ref_src.c src/child.c
 MOCK = tests/mock_vendor.c
 .PHONY: all test sanitize clean
 all: build/codec_probe build/runtime_mock
@@ -8,7 +8,7 @@ build:
 	mkdir -p build
 build/codec_probe: src/descriptor.c src/descriptor.h tests/codec_probe.c | build
 	$(CC) $(CFLAGS) -o $@ src/descriptor.c tests/codec_probe.c
-build/runtime_mock: $(RUNTIME) $(MOCK) src/runtime.h src/io.h src/factory_adapter.h src/descriptor.h | build
+build/runtime_mock: $(RUNTIME) $(MOCK) src/runtime.h src/io.h src/factory_adapter.h src/ref_src.h src/descriptor.h | build
 	$(CC) $(CFLAGS) -DASP_TEST_ONLY -o $@ $(RUNTIME) $(MOCK)
 build/test_alias_policy: tests/test_alias_policy.c launcher/alias_policy.c launcher/alias_policy.h | build
 	$(CC) $(CFLAGS) -o $@ tests/test_alias_policy.c launcher/alias_policy.c

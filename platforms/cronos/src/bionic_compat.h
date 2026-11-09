@@ -46,6 +46,13 @@ extern char *getenv(const char*);
 extern void *dlopen(const char*,int);
 extern void *dlsym(void*,const char*);
 extern int dlclose(void*);
+typedef struct {
+    const char *dli_fname;
+    void *dli_fbase;
+    const char *dli_sname;
+    void *dli_saddr;
+} asp_dl_info;
+extern int dladdr(const void *, asp_dl_info *);
 extern int *__errno(void);
 #define errno (*__errno())
 extern void _exit(int);

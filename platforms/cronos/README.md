@@ -1,6 +1,6 @@
 # Cronos factory microphone processing
 
-Experimental ARM32/Bionic ASR-only helper for Echo Show 5 (2nd generation,
+Experimental ARM32/Bionic ASR helper for Echo Show 5 (2nd generation,
 Cronos). It runs the original factory microphone processing library and returns
 mono audio through TECHO5 External ASP.
 
@@ -11,6 +11,7 @@ mono audio through TECHO5 External ASP.
 | 6574.1 | 13222532996 | d8ea580a54fe75a524d50dfec7b8e778c66cef0385a9f0142b84bc58319dbff1 |
 
 Validation covers offline execution with the matching original runtime.
+The child verifies the original library and configuration at startup.
 Physical-device operation, microphone calibration effectiveness, CPU usage and
 recognition quality require hardware testing. Other firmware combinations need
 separate runtime validation.
@@ -28,11 +29,12 @@ receives 320 output samples. Pending input and output remain owned by the
 session; EOF does not manufacture a partial factory quantum or an extra wire
 response. There is no special reset or padding during microphone mute.
 
-ASR-only does not provide a factory Speaker playback/reference producer or
-promise factory AEC parity. Capture REF channels are preserved even when
-nonzero. Wake-word and speech recognition remain in TECHO5 and its configured
-services. The helper does not apply its own calibration, gain, mixing,
-resampling, beamforming or echo cancellation.
+The child supplies capture loopback through the factory reference interface.
+It converts REF0/REF1 to stereo PCM16 at 48 kHz and keeps the conversion state
+across 128-frame capture quanta. Factory ASR still receives the original
+four-channel capture. The factory library owns microphone calibration and
+acoustic processing. Wake-word and speech recognition remain in TECHO5 and
+its configured services.
 
 The launcher uses a matching bundled factory runtime. It validates installed
 native calibration aliases and their readable, nonempty kernel sources

@@ -13,10 +13,13 @@ flags=(-B "$BINUTILS_DIR/" -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -fno-bu
  -fno-strict-aliasing -fPIC -ffreestanding -march=armv7-a -marm -mfpu=neon -mfloat-abi=softfp
  -nostdinc -I"$ROOT/src" -DASP_BIONIC -ffile-prefix-map="$ROOT"=.)
 objects=()
-for f in descriptor io runtime factory_adapter vendor_factory child bionic_entry; do
+for f in descriptor io runtime factory_adapter vendor_factory ref_src child bionic_entry; do
  "$BIONIC_CC" "${flags[@]}" -c "$ROOT/src/$f.c" -o "$OUT_DIR/objects/$f.o"
  objects+=("$OUT_DIR/objects/$f.o")
 done
+# Reuse the freestanding SHA-256 implementation used for the Rook factory pin.
+"$BIONIC_CC" "${flags[@]}" -c "$ROOT/../rook/src/sha256.c" -o "$OUT_DIR/objects/sha256.o"
+objects+=("$OUT_DIR/objects/sha256.o")
 "$BIONIC_CC" "${flags[@]}" -c "$ROOT/src/start32.S" -o "$OUT_DIR/objects/start32.o"
 objects+=("$OUT_DIR/objects/start32.o")
 "$BIONIC_LD" -m armelf_linux_eabi -pie --no-undefined --hash-style=both --dynamic-linker=/system/bin/linker \

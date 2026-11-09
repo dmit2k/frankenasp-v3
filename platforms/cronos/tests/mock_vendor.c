@@ -5,7 +5,8 @@
 #include <string.h>
 #include <sys/stat.h>
 static unsigned init_n, create_n, process_n, destroy_n, deinit_n;
-static int pipeline;
+static unsigned ref_open_n, ref_supply_n, ref_close_n;
+static int pipeline, provider, ref_registered;
 static int fault(const char *name) {
     const char *value = getenv("ASP1_TEST_FAULT");
     return value && !strcmp(value, name);
@@ -31,11 +32,32 @@ static void *mock_create(uint32_t type, uint32_t fmt, uint32_t ch, uint32_t rate
     return type || fmt != 6 || ch != 4 || rate != 16000 || outfmt != 1 ||
         outch != 1 || outrate != 16000 || fault("create") ? NULL : &pipeline;
 }
+static int32_t mock_ref_open(void *handle, void **ref) {
+    ++ref_open_n;
+    if (handle != &pipeline || ref_registered || fault("ref-open")) return -1;
+    ref_registered = 1;
+    *ref = &provider;
+    return 0;
+}
+static int32_t mock_ref_supply(void *ref, const int16_t *pcm) {
+    ++ref_supply_n;
+    if (ref != &provider || !ref_registered || !pcm ||
+        ref_supply_n != process_n + 1 || fault("ref-supply")) return -1;
+    if (fault("ref-overrun")) ((int16_t *)(uintptr_t)pcm)[CRONOS_REF_FRAMES * CRONOS_REF_CHANNELS] = 0;
+    return 0;
+}
+static int32_t mock_ref_close(void *ref) {
+    ++ref_close_n;
+    if (ref != &provider || !ref_registered) return -1;
+    ref_registered = 0;
+    return fault("ref-close") ? -1 : 0;
+}
 static int32_t mock_process(void *handle, const void *input, uint32_t *ni,
                              void *output, uint32_t *no, uint32_t context,
                              uint32_t sec, uint32_t nsec) {
     unsigned q = process_n++;
-    if (handle != &pipeline || !input || !output || !ni || !no ||
+    if (handle != &pipeline || !ref_registered || ref_supply_n != q + 1 ||
+        !input || !output || !ni || !no ||
         *ni != 128 || *no != 128 || context ||
         sec != q / 125u || nsec != (q % 125u) * 8000000u || fault("process")) return -1;
     const uint8_t *raw = input;
@@ -56,14 +78,19 @@ static int32_t mock_process(void *handle, const void *input, uint32_t *ni,
     if (fault("input-overrun")) ((uint8_t *)(uintptr_t)input)[1536] = 0;
     return 0;
 }
-static int32_t mock_destroy(void *p) { ++destroy_n; return p != &pipeline || fault("destroy"); }
+static int32_t mock_destroy(void *p) {
+    ++destroy_n;
+    return p != &pipeline || ref_registered || fault("destroy");
+}
 static void mock_deinit(void) { ++deinit_n; }
 int asp_vendor_load(factory_abi *out) {
     if (fault("load")) return -1;
-    *out = (factory_abi){mock_init, mock_create, mock_process, mock_destroy, mock_deinit};
+    *out = (factory_abi){mock_init, mock_create, mock_process, mock_destroy, mock_deinit,
+                         mock_ref_open, mock_ref_supply, mock_ref_close};
     return 0;
 }
 void asp_vendor_unload(void) {
-    fprintf(stderr, "mock counts init=%u create=%u process=%u destroy=%u deinit=%u\n",
-            init_n, create_n, process_n, destroy_n, deinit_n);
+    fprintf(stderr, "mock counts init=%u create=%u process=%u destroy=%u deinit=%u "
+                    "ref_open=%u ref_supply=%u ref_close=%u\n",
+            init_n, create_n, process_n, destroy_n, deinit_n, ref_open_n, ref_supply_n, ref_close_n);
 }

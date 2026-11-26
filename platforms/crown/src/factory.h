@@ -5,6 +5,8 @@
 #define CROWN_IN_STRIDE 18u
 #define CROWN_SPK_FRAMES 384u
 #define CROWN_MAX_LEAD 8u
+#define CROWN_DEFAULT_GAIN_DB 24
+#define CROWN_LIMIT 29000
 typedef struct {int32_t sec,nsec;} asp_time32;
 typedef struct {uint32_t reserved;int32_t full_init;char config_dir[248];} crown_init_info;
 typedef struct {
@@ -23,6 +25,7 @@ typedef struct {
  int16_t last_l,last_r;
  uint64_t quantum_index;
  unsigned lead,delay_head;
+ int32_t gain_q8,limit_q15;
  uint8_t delay[CROWN_MAX_LEAD+1][CROWN_QUANTUM*CROWN_IN_STRIDE] __attribute__((aligned(16)));
  int16_t ref48[CROWN_SPK_FRAMES*2] __attribute__((aligned(16)));
  int16_t spk_out[CROWN_SPK_FRAMES*2] __attribute__((aligned(16)));

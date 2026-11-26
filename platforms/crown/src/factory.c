@@ -71,6 +71,15 @@ int factory_open(factory_adapter *a,const factory_abi *v) {
   a->lead=s && s[0]>='0' && s[0]<='8' ? (unsigned)(s[0]-'0') : 2u;
   if(!a->use_speaker) a->lead=0;
  }
+ {
+  const char *s=getenv("CROWN_ASP_GAIN_DB");
+  int db=CROWN_DEFAULT_GAIN_DB;
+  if(s && s[0]>='0' && s[0]<='9') {db=0;for(;*s>='0' && *s<='9' && db<40;s++) db=db*10+(*s-'0');}
+  if(db>36) db=36;
+  int32_t q=256;
+  for(int i=0;i<db;i++) q=(int32_t)(((int64_t)q*287+128)/256);
+  a->gain_q8=q;a->limit_q15=32768;
+ }
  if(a->use_speaker) {
   a->speaker=a->abi.create(PIPE_SPEAKER,FMT_PCM16,2,48000,FMT_PCM16,2,48000);
   if(!a->speaker) {report("crown: speaker pipeline failed\n");goto failed;}
@@ -106,6 +115,27 @@ static void upsample(factory_adapter *a,const uint8_t *raw) {
  }
 }
 
+static void apply_gain(factory_adapter *a,int16_t *out) {
+ if(a->gain_q8==256) return;
+ int32_t peak=0;
+ for(unsigned i=0;i<CROWN_QUANTUM;i++) {
+  int32_t v=out[i]<0?-(int32_t)out[i]:out[i];
+  if(v>peak) peak=v;
+ }
+ int64_t loud=((int64_t)peak*a->gain_q8)>>8;
+ int32_t want=32768;
+ if(loud>CROWN_LIMIT) want=(int32_t)(((int64_t)CROWN_LIMIT<<15)/loud);
+ if(want<a->limit_q15) a->limit_q15=want;
+ else a->limit_q15+=(want-a->limit_q15)/48;
+ int64_t g=((int64_t)a->gain_q8*a->limit_q15)>>15;
+ for(unsigned i=0;i<CROWN_QUANTUM;i++) {
+  int64_t y=((int64_t)out[i]*g)>>8;
+  if(y>32767) y=32767;
+  if(y<-32768) y=-32768;
+  out[i]=(int16_t)y;
+ }
+}
+
 int factory_process(factory_adapter *a,const uint8_t raw[CROWN_QUANTUM*CROWN_IN_STRIDE],int16_t out[CROWN_QUANTUM]) {
  if(!a || !raw || !out || a->terminal || a->closed || !a->asr) return -1;
  uint64_t sec=a->quantum_index/125u;
@@ -134,6 +164,7 @@ int factory_process(factory_adapter *a,const uint8_t raw[CROWN_QUANTUM*CROWN_IN_
  if(rc || no!=CROWN_QUANTUM) {
   report("crown: asr process failed\n");a->terminal=1;return -1;
  }
+ apply_gain(a,out);
  ++a->quantum_index;
  return 0;
 }

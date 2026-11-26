@@ -14,6 +14,7 @@ The difference was striking. [Read about the testing process and results](docs/a
 
 - `platforms/athena/` — Echo Show 8 (2nd generation): ARM32 Linux launcher and ARM32/Bionic factory ASP helper, build scripts, offline tests and fixtures. **Tested on a physical Echo Show 8 (2nd gen).**
 - `platforms/rook/` — Echo Spot (1st generation, 2017): ARM32 Linux launcher and ARM32/Bionic factory ASP helper, native tests and offline build scripts. **Tested on a physical Echo Spot (1st gen).**
+- `platforms/crown/` — Echo Show 8 (1st generation): ARM32 Linux launcher and ARM32/Bionic factory ASP helper for Fire OS 6.5.7.3, build and bundle scripts. **Contributed and tested on a physical Echo Show 8 (1st gen)**; see [the Crown guide](platforms/crown/README.md).
 
 Both implementations have been deployed and exercised with TECHO5 and the original factory DSP on real devices; validation is not limited to emulation or offline tests. See the platform guides for the firmware builds currently documented for [Athena](platforms/athena/README.md#supported-firmware) and [Rook](platforms/rook/README.md#supported-firmware). These are the only Echo models currently available to the maintainer. Other models have **not** been adapted or tested because the maintainer does not have access to their hardware; support for other models must not be assumed. Adding a model requires device-specific adaptation and on-device verification. Have an unused Echo collecting dust? You're always welcome to donate it to the maintainer for testing and experiments. :)
 

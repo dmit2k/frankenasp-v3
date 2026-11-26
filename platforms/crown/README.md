@@ -25,7 +25,7 @@ The factory ASR aligns its echo reference by searching for an exact match betwee
 - delays the capture going to the ASR by 2 quanta (16 ms, `CROWN_ASP_LEAD`), so that the reference always leads; with no lead the ASR logs "Out of sync" and runs without echo cancellation;
 - requires `"Passthrough": true` for the Speaker pipeline in `asp.cfg`, otherwise the speaker EQ/limiter changes the reference and no match is found. `tools/make_bundle.sh` patches the bundled copy.
 
-TECHO5 hands the External ASP output to the voice pipeline after its own leveler, so the factory output reached STT about 20–30 dB quieter than the built-in path. The helper applies a fixed +24 dB gain with a peak limiter (`CROWN_ASP_GAIN_DB` overrides it in offline tests).
+TECHO5 hands the External ASP output to the voice pipeline after its own leveler, so the factory output reached STT about 20–30 dB quieter than the built-in path. The helper applies a fixed +28 dB gain with a peak limiter (`CROWN_ASP_GAIN_DB` overrides it in offline tests).
 
 ## Testing status
 

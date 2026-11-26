@@ -5,7 +5,7 @@
 #define CROWN_IN_STRIDE 18u
 #define CROWN_SPK_FRAMES 384u
 #define CROWN_MAX_LEAD 8u
-#define CROWN_DEFAULT_GAIN_DB 24
+#define CROWN_DEFAULT_GAIN_DB 28
 #define CROWN_LIMIT 29000
 typedef struct {int32_t sec,nsec;} asp_time32;
 typedef struct {uint32_t reserved;int32_t full_init;char config_dir[248];} crown_init_info;
